@@ -112,7 +112,7 @@ const App: React.FC = () => {
           <div className="flex flex-col gap-8 items-center justify-center min-h-[60vh] animate-in fade-in zoom-in duration-700">
             <div className="text-center space-y-2">
                <h2 className="text-3xl font-extrabold text-gray-800 tracking-tight">Linha Viva Leste</h2>
-               <p className="text-gray-500 max-w-xs mx-auto text-sm font-medium">Sistema Energisa de Controle de Materiais</p>
+               <p className="text-gray-500 max-w-xs mx-auto text-sm font-medium">Sistema DCMD de Controle de Materiais</p>
             </div>
             
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 w-full max-w-2xl">

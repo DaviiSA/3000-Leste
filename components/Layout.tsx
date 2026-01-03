@@ -23,7 +23,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigate }) =>
           </div>
           <div>
             <h1 className="text-xl font-bold tracking-tight leading-none">Linha Viva Leste</h1>
-            <p className="text-[10px] uppercase font-semibold opacity-90 tracking-widest text-yellow-400">Energisa</p>
+            <p className="text-[10px] uppercase font-semibold opacity-90 tracking-widest text-yellow-400">DCMD</p>
           </div>
         </div>
         
@@ -45,7 +45,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigate }) =>
       {/* Footer Branding */}
       <footer className="py-4 border-t border-gray-200 bg-white">
         <div className="container mx-auto px-4 flex justify-between items-center opacity-60 text-xs">
-          <span>&copy; 2024 Linha Viva Leste</span>
+          <span>&copy; 2026 Linha Viva Leste</span>
           <div className="flex gap-1">
              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: ENERGISA_COLORS.primary }}></div>
              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: ENERGISA_COLORS.secondary }}></div>
