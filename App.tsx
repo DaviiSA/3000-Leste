@@ -1,12 +1,19 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Layout from './components/Layout';
 import AdminPanel from './components/AdminPanel';
 import RequestForm from './components/RequestForm';
 import { Material, MaterialRequest, View, RequestedItem } from './types';
-import { initializeMaterials, saveMaterials, getRequests, saveRequests, syncToGoogleSheets } from './services/dataService';
+import { 
+  initializeMaterials, 
+  saveMaterials, 
+  getRequests, 
+  saveRequests, 
+  syncToGoogleSheets,
+  fetchRemoteData 
+} from './services/dataService';
 import { ADMIN_PASSWORD, ENERGISA_COLORS, GOOGLE_SHEETS_WEBAPP_URL } from './constants';
-import { ShieldAlert, UserCheck, Lock, ArrowRight, Database, Loader2 } from 'lucide-react';
+import { ShieldAlert, UserCheck, Lock, ArrowRight, Database, Loader2, RefreshCw } from 'lucide-react';
 
 const App: React.FC = () => {
   const [view, setView] = useState<View>('Home');
@@ -15,11 +22,30 @@ const App: React.FC = () => {
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [passInput, setPassInput] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Função para carregar dados da planilha
+  const loadGlobalData = useCallback(async () => {
+    setIsSyncing(true);
+    const remote = await fetchRemoteData();
+    if (remote) {
+      setMaterials(remote.materials);
+      setRequests(remote.requests);
+    } else {
+      // Fallback para local se a rede falhar
+      setMaterials(initializeMaterials());
+      setRequests(getRequests());
+    }
+    setIsSyncing(false);
+    setIsLoading(false);
+  }, []);
 
   useEffect(() => {
-    setMaterials(initializeMaterials());
-    setRequests(getRequests());
-  }, []);
+    loadGlobalData();
+    // Opcional: Polling a cada 2 minutos para manter sincronizado sem refresh manual
+    const interval = setInterval(loadGlobalData, 120000);
+    return () => clearInterval(interval);
+  }, [loadGlobalData]);
 
   // Calcula o saldo disponível subtraindo o que já foi solicitado e está pendente
   const materialsWithEffectiveStock = materials.map(m => {
@@ -39,7 +65,11 @@ const App: React.FC = () => {
   const triggerSync = async (updatedMaterials: Material[], updatedRequests: MaterialRequest[]) => {
     setIsSyncing(true);
     try {
-      await syncToGoogleSheets({ materials: updatedMaterials, requests: updatedRequests });
+      const success = await syncToGoogleSheets({ materials: updatedMaterials, requests: updatedRequests });
+      if (success) {
+        // Após sincronizar (enviar), buscamos novamente para garantir que estamos com a versão final da planilha
+        await loadGlobalData();
+      }
     } finally {
       setIsSyncing(false);
     }
@@ -65,7 +95,7 @@ const App: React.FC = () => {
     saveRequests(updatedRequests);
     
     await triggerSync(materials, updatedRequests);
-    alert(`Solicitação ${newRequest.id} enviada com sucesso!`);
+    alert(`Solicitação ${newRequest.id} enviada e sincronizada!`);
   };
 
   const handleUpdateRequestStatus = (requestId: string, status: 'Atendido' | 'Cancelado') => {
@@ -105,6 +135,16 @@ const App: React.FC = () => {
     }
   };
 
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4">
+        <Loader2 size={48} className="text-blue-600 animate-spin mb-4" />
+        <h2 className="text-xl font-bold text-gray-700">Sincronizando Inventário...</h2>
+        <p className="text-sm text-gray-400">Buscando dados da Planilha DCMD</p>
+      </div>
+    );
+  }
+
   const renderContent = () => {
     switch (view) {
       case 'Home':
@@ -113,6 +153,13 @@ const App: React.FC = () => {
             <div className="text-center space-y-2">
                <h2 className="text-3xl font-extrabold text-gray-800 tracking-tight">Linha Viva Leste</h2>
                <p className="text-gray-500 max-w-xs mx-auto text-sm font-medium">Sistema DCMD de Controle de Materiais</p>
+               <button 
+                 onClick={loadGlobalData}
+                 className="mt-4 inline-flex items-center gap-2 text-[10px] font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-full hover:bg-blue-100 transition-colors uppercase tracking-widest"
+               >
+                 <RefreshCw size={10} className={isSyncing ? 'animate-spin' : ''} />
+                 {isSyncing ? 'Atualizando...' : 'Atualizar Dados Agora'}
+               </button>
             </div>
             
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 w-full max-w-2xl">
@@ -187,7 +234,7 @@ const App: React.FC = () => {
                ) : (
                  <>
                    <Database size={16} />
-                   Planilha Google Conectada
+                   Dados em Tempo Real
                  </>
                )}
             </div>
@@ -203,12 +250,21 @@ const App: React.FC = () => {
       case 'Request':
         return (
           <div className="space-y-4">
-            {isSyncing && (
-              <div className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 animate-pulse mb-4">
-                <Loader2 size={14} className="animate-spin" />
-                REGISTRANDO SOLICITAÇÃO...
-              </div>
-            )}
+            <div className="flex justify-between items-center mb-2 px-1">
+               <button 
+                 onClick={loadGlobalData}
+                 className="flex items-center gap-1.5 text-[10px] font-bold text-gray-400 hover:text-blue-600 transition-colors uppercase tracking-widest"
+               >
+                 <RefreshCw size={10} className={isSyncing ? 'animate-spin' : ''} />
+                 {isSyncing ? 'Sincronizando...' : 'Atualizar Saldo'}
+               </button>
+               {isSyncing && (
+                 <div className="flex items-center gap-2 text-blue-600 text-[10px] font-bold animate-pulse">
+                    <Loader2 size={10} className="animate-spin" />
+                    ENVIANDO...
+                 </div>
+               )}
+            </div>
             <RequestForm 
               materials={materialsWithEffectiveStock} 
               onSubmit={handleAddRequest} 

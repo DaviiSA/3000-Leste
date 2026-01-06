@@ -1,6 +1,6 @@
 
 import * as XLSX from 'xlsx';
-import { Material, MaterialRequest } from '../types';
+import { Material, MaterialRequest, RequestedItem } from '../types';
 import { RAW_MATERIALS as RAW_STRING, GOOGLE_SHEETS_WEBAPP_URL } from '../constants';
 
 const STORAGE_KEYS = {
@@ -8,24 +8,72 @@ const STORAGE_KEYS = {
   REQUESTS: 'lv_leste_requests',
 };
 
+/**
+ * Busca dados frescos da planilha do Google.
+ * Esta é a chave para a sincronização entre dispositivos.
+ */
+export const fetchRemoteData = async (): Promise<{ materials: Material[], requests: MaterialRequest[] } | null> => {
+  const url = GOOGLE_SHEETS_WEBAPP_URL;
+  if (!url) return null;
+
+  try {
+    const response = await fetch(`${url}?t=${Date.now()}`);
+    const data = await response.json();
+    
+    // Mapeia os materiais usando o CÓDIGO como ID estável
+    const materials: Material[] = data.materials.map((m: any) => ({
+      id: String(m.code),
+      code: String(m.code),
+      name: m.name,
+      stock: Number(m.stock)
+    }));
+
+    // Mapeia os pedidos e tenta reconstruir o carrinho (items) do JSON na coluna 'details'
+    const requests: MaterialRequest[] = data.requests.map((r: any) => {
+      let items: RequestedItem[] = [];
+      try {
+        // Tenta parsear o JSON de itens guardado na planilha
+        // Se a coluna details for um JSON válido, reconstruímos o carrinho
+        if (r.details && (r.details.startsWith('[') || r.details.startsWith('{'))) {
+          items = JSON.parse(r.details);
+        }
+      } catch (e) {
+        console.warn('Não foi possível parsear itens do pedido:', r.id);
+      }
+
+      return {
+        id: r.id,
+        vtr: r.vtr,
+        timestamp: r.timestamp,
+        status: r.status as any,
+        items: items
+      };
+    });
+
+    localStorage.setItem(STORAGE_KEYS.MATERIALS, JSON.stringify(materials));
+    localStorage.setItem(STORAGE_KEYS.REQUESTS, JSON.stringify(requests));
+
+    return { materials, requests };
+  } catch (error) {
+    console.error('Erro ao buscar dados remotos:', error);
+    return null;
+  }
+};
+
 export const initializeMaterials = (): Material[] => {
   const stored = localStorage.getItem(STORAGE_KEYS.MATERIALS);
   if (stored) return JSON.parse(stored);
 
-  const initial = RAW_STRING.split('\n').map((line, index) => {
+  return RAW_STRING.split('\n').map((line) => {
     const parts = line.trim().split('\t');
-    const code = parts[0];
-    const name = parts.slice(1).join('\t');
+    const code = parts[0]?.trim() || 'S/C';
     return {
-      id: `m-${index}`,
-      code: code?.trim() || 'S/C',
-      name: name?.trim() || 'Material sem nome',
+      id: code,
+      code: code,
+      name: parts.slice(1).join('\t')?.trim() || 'Material sem nome',
       stock: 0, 
     };
   });
-  
-  localStorage.setItem(STORAGE_KEYS.MATERIALS, JSON.stringify(initial));
-  return initial;
 };
 
 export const saveMaterials = (materials: Material[]) => {
@@ -48,15 +96,9 @@ export const exportToExcel = (data: any[], fileName: string) => {
   XLSX.writeFile(wb, `${fileName}.xlsx`);
 };
 
-/**
- * Sincroniza os dados com a planilha do Google de forma robusta.
- */
 export const syncToGoogleSheets = async (data: { materials: Material[], requests: MaterialRequest[] }) => {
   const url = GOOGLE_SHEETS_WEBAPP_URL;
-  if (!url) {
-    console.warn('URL da planilha não definida.');
-    return false;
-  }
+  if (!url) return false;
 
   try {
     const payload = {
@@ -69,25 +111,22 @@ export const syncToGoogleSheets = async (data: { materials: Material[], requests
       requests: data.requests.map(r => ({
         id: r.id,
         vtr: r.vtr,
-        timestamp: new Date(r.timestamp).toLocaleString('pt-BR'),
+        timestamp: new Date(r.timestamp).toISOString(),
         status: r.status,
-        itemDetails: r.items.map(i => {
-          const m = data.materials.find(mat => mat.id === i.materialId);
-          return `${m?.name || 'Item'} (x${i.quantity})`;
-        }).join(' | ')
+        // Salvamos os itens em formato JSON na coluna de detalhes da planilha
+        // Isso permite que outros aparelhos leiam o carrinho e calculem o saldo livre
+        itemDetails: JSON.stringify(r.items)
       }))
     };
 
-    // Usar Blob de texto plano para evitar problemas de pré-venda (OPTIONS) do CORS no Script do Google
     const blob = new Blob([JSON.stringify(payload)], { type: 'text/plain' });
     
     await fetch(url, {
       method: 'POST',
-      mode: 'no-cors', // Necessário para o Google Apps Script lidar com redirecionamento
+      mode: 'no-cors',
       body: blob,
     });
 
-    console.log('Dados enviados para sincronização.');
     return true;
   } catch (error) {
     console.error('Erro na sincronização:', error);
