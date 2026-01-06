@@ -24,25 +24,38 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  const loadGlobalData = useCallback(async (showLoading = true) => {
-    if (showLoading) setIsSyncing(true);
-    const remote = await fetchRemoteData();
-    if (remote) {
-      setMaterials(remote.materials);
-      setRequests(remote.requests);
-    } else {
-      setMaterials(initializeMaterials());
-      setRequests(getRequests());
+  // Carrega dados e garante que o estado de sincronismo seja desativado ao fim
+  const loadGlobalData = useCallback(async (isManual = true) => {
+    if (isManual) setIsSyncing(true);
+    
+    try {
+      const remote = await fetchRemoteData();
+      if (remote && remote.materials.length > 0) {
+        setMaterials(remote.materials);
+        setRequests(remote.requests);
+      } else {
+        // Se falhar o remoto, inicializa com local
+        if (materials.length === 0) {
+          setMaterials(initializeMaterials());
+          setRequests(getRequests());
+        }
+      }
+    } catch (e) {
+      console.error("Erro no carregamento:", e);
+    } finally {
+      setIsSyncing(false); // Sempre desativa o indicador de sincronismo
+      setIsLoading(false); // Sempre desativa o loader inicial
     }
-    setIsSyncing(false);
-    setIsLoading(false);
-  }, []);
+  }, [materials.length]);
 
   useEffect(() => {
-    loadGlobalData();
+    loadGlobalData(true);
+    // Auto-refresh a cada 2 minutos
+    const interval = setInterval(() => loadGlobalData(false), 120000);
+    return () => clearInterval(interval);
   }, [loadGlobalData]);
 
-  // Cálculo de estoque disponível (Estoque Total - Quantidades em pedidos Pendentes)
+  // Saldo efetivo (Estoque total menos itens em pedidos pendentes)
   const materialsWithEffectiveStock = useMemo(() => {
     return materials.map(m => {
       const reserved = requests
@@ -59,20 +72,21 @@ const App: React.FC = () => {
     });
   }, [materials, requests]);
 
+  // Função central para disparar sincronização após mudanças
   const triggerSync = async (updatedMaterials: Material[], updatedRequests: MaterialRequest[]) => {
     setIsSyncing(true);
-    const success = await syncToGoogleSheets({ materials: updatedMaterials, requests: updatedRequests });
-    if (success) {
-      // Pequeno delay para o Google finalizar a escrita antes de lermos de volta
-      setTimeout(() => loadGlobalData(false), 1500);
-    } else {
-      setIsSyncing(false);
-    }
+    await syncToGoogleSheets({ materials: updatedMaterials, requests: updatedRequests });
+    
+    // Pequena pausa para o Google finalizar antes de relermos
+    setTimeout(() => {
+      loadGlobalData(false);
+    }, 1500);
   };
 
   const handleUpdateStock = (id: string, newStock: number) => {
-    const updated = materials.map(m => m.id === id ? { ...m, stock: Math.max(0, newStock) } : m);
-    // Atualização otimista do estado local
+    const val = Math.max(0, newStock);
+    const updated = materials.map(m => m.id === id ? { ...m, stock: val } : m);
+    
     setMaterials(updated);
     saveMaterials(updated);
     triggerSync(updated, requests);
@@ -87,11 +101,12 @@ const App: React.FC = () => {
       status: 'Pendente'
     };
     const updatedRequests = [...requests, newRequest];
+    
     setRequests(updatedRequests);
     saveRequests(updatedRequests);
     
     await triggerSync(materials, updatedRequests);
-    alert(`Solicitação ${newRequest.id} enviada e sincronizada!`);
+    alert(`Solicitação ${newRequest.id} enviada!`);
   };
 
   const handleUpdateRequestStatus = (requestId: string, status: 'Atendido' | 'Cancelado') => {
@@ -135,8 +150,8 @@ const App: React.FC = () => {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4">
         <Loader2 size={48} className="text-blue-600 animate-spin mb-4" />
-        <h2 className="text-xl font-bold text-gray-700">Iniciando Sistema...</h2>
-        <p className="text-sm text-gray-400">Aguardando resposta do servidor DCMD</p>
+        <h2 className="text-xl font-bold text-gray-700">Linha Viva Leste</h2>
+        <p className="text-sm text-gray-400 font-medium">Conectando ao banco de dados...</p>
       </div>
     );
   }
@@ -149,13 +164,18 @@ const App: React.FC = () => {
             <div className="text-center space-y-2">
                <h2 className="text-3xl font-extrabold text-gray-800 tracking-tight">Linha Viva Leste</h2>
                <p className="text-gray-500 max-w-xs mx-auto text-sm font-medium">Sistema DCMD de Controle de Materiais</p>
-               <button 
-                 onClick={() => loadGlobalData()}
-                 className="mt-4 inline-flex items-center gap-2 text-[10px] font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-full hover:bg-blue-100 transition-colors uppercase tracking-widest"
-               >
-                 <RefreshCw size={10} className={isSyncing ? 'animate-spin' : ''} />
-                 {isSyncing ? 'Atualizando...' : 'Atualizar Dados Agora'}
-               </button>
+               <div className="mt-4 flex justify-center">
+                 <button 
+                   onClick={() => loadGlobalData(true)}
+                   disabled={isSyncing}
+                   className={`inline-flex items-center gap-2 text-[10px] font-bold px-3 py-1.5 rounded-full uppercase tracking-widest transition-all ${
+                     isSyncing ? 'bg-blue-600 text-white animate-pulse' : 'text-blue-600 bg-blue-50 hover:bg-blue-100'
+                   }`}
+                 >
+                   <RefreshCw size={10} className={isSyncing ? 'animate-spin' : ''} />
+                   {isSyncing ? 'Sincronizando...' : 'Sincronizar Agora'}
+                 </button>
+               </div>
             </div>
             
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 w-full max-w-2xl">
@@ -168,7 +188,7 @@ const App: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="text-xl font-bold text-gray-800">Administrador</h3>
-                  <p className="text-sm text-gray-500 mt-1">Gestão de estoque e baixa de materiais.</p>
+                  <p className="text-sm text-gray-500 mt-1">Gestão de estoque e solicitações.</p>
                 </div>
                 <ArrowRight className="mt-2 text-blue-600 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
               </button>
@@ -182,7 +202,7 @@ const App: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="text-xl font-bold text-gray-800">Solicitação</h3>
-                  <p className="text-sm text-gray-500 mt-1">Pedir materiais para a sua VTR.</p>
+                  <p className="text-sm text-gray-500 mt-1">Pedir materiais para a VTR.</p>
                 </div>
                 <ArrowRight className="mt-2 text-orange-600 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
               </button>
@@ -198,21 +218,21 @@ const App: React.FC = () => {
                 <div className="inline-flex p-4 rounded-2xl bg-blue-50 text-blue-600 mb-6">
                   <Lock size={32} />
                 </div>
-                <h2 className="text-2xl font-bold text-gray-800 mb-2">Acesso Administrativo</h2>
+                <h2 className="text-2xl font-bold text-gray-800 mb-2">Acesso Restrito</h2>
                 <form onSubmit={handleAdminAuth} className="space-y-4">
                   <input
                     autoFocus
                     type="password"
-                    placeholder="Digite sua senha"
+                    placeholder="Senha DCMD"
                     className="w-full px-5 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl focus:border-blue-500 focus:ring-0 transition-all text-center text-lg font-bold"
                     value={passInput}
                     onChange={(e) => setPassInput(e.target.value)}
                   />
                   <button type="submit" className="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold shadow-lg hover:bg-blue-700 transition-all">
-                    Acessar Painel
+                    Entrar no Painel
                   </button>
                   <button type="button" onClick={() => setView('Home')} className="w-full py-2 text-gray-400 text-sm hover:text-gray-600">
-                    Cancelar e Voltar
+                    Voltar
                   </button>
                 </form>
               </div>
@@ -221,17 +241,11 @@ const App: React.FC = () => {
         }
         return (
           <div className="space-y-6">
-            <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-center gap-2 text-blue-600 font-bold text-xs uppercase tracking-wider relative overflow-hidden">
+            <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-center gap-2 text-blue-600 font-bold text-xs uppercase tracking-wider">
                {isSyncing ? (
-                 <>
-                   <Loader2 size={16} className="animate-spin" />
-                   Sincronizando...
-                 </>
+                 <><Loader2 size={16} className="animate-spin" /> SINCRONIZANDO...</>
                ) : (
-                 <>
-                   <Database size={16} />
-                   Dados em Tempo Real
-                 </>
+                 <><Database size={16} /> DADOS EM TEMPO REAL</>
                )}
             </div>
             <AdminPanel 
@@ -248,8 +262,9 @@ const App: React.FC = () => {
           <div className="space-y-4">
             <div className="flex justify-between items-center mb-2 px-1">
                <button 
-                 onClick={() => loadGlobalData()}
-                 className="flex items-center gap-1.5 text-[10px] font-bold text-gray-400 hover:text-blue-600 transition-colors uppercase tracking-widest"
+                 onClick={() => loadGlobalData(true)}
+                 disabled={isSyncing}
+                 className="flex items-center gap-1.5 text-[10px] font-bold text-gray-400 hover:text-blue-600 transition-colors uppercase tracking-widest disabled:opacity-50"
                >
                  <RefreshCw size={10} className={isSyncing ? 'animate-spin' : ''} />
                  {isSyncing ? 'Sincronizando...' : 'Atualizar Saldo'}
@@ -257,7 +272,7 @@ const App: React.FC = () => {
                {isSyncing && (
                  <div className="flex items-center gap-2 text-blue-600 text-[10px] font-bold animate-pulse">
                     <Loader2 size={10} className="animate-spin" />
-                    ENVIANDO...
+                    ENVIANDO PARA NUVEM
                  </div>
                )}
             </div>

@@ -8,50 +8,63 @@ const STORAGE_KEYS = {
   REQUESTS: 'lv_leste_requests',
 };
 
+/**
+ * Busca dados da planilha com timeout de segurança
+ */
 export const fetchRemoteData = async (): Promise<{ materials: Material[], requests: MaterialRequest[] } | null> => {
   const url = GOOGLE_SHEETS_WEBAPP_URL;
   if (!url) return null;
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 segundos de timeout
+
   try {
-    const response = await fetch(`${url}?t=${Date.now()}`);
+    const response = await fetch(`${url}?t=${Date.now()}`, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) throw new Error('Servidor indisponível');
+    
     const data = await response.json();
     
-    // Mapeia materiais usando CODE como ID único e estável
-    const materials: Material[] = (data.materials || []).map((m: any) => ({
-      id: String(m.code),
-      code: String(m.code),
-      name: m.name || 'Sem nome',
-      stock: Number(m.stock) || 0
-    }));
+    // Processamento de materiais
+    const materials: Material[] = (data.materials || []).map((m: any) => {
+      const codeStr = String(m.code || '').trim();
+      return {
+        id: codeStr, // O ID deve ser idêntico ao código para facilitar a busca
+        code: codeStr,
+        name: String(m.name || 'Sem descrição').trim(),
+        stock: Number(m.stock) || 0
+      };
+    }).filter((m: Material) => m.code !== '');
 
-    // Mapeia pedidos tratando a coluna de detalhes (itens)
+    // Processamento de solicitações
     const requests: MaterialRequest[] = (data.requests || []).map((r: any) => {
       let items: RequestedItem[] = [];
       try {
         if (r.details) {
-          // Se já for um objeto/array, usa direto. Se for string, faz parse.
-          items = typeof r.details === 'string' ? JSON.parse(r.details) : r.details;
+          const detailsRaw = typeof r.details === 'string' ? JSON.parse(r.details) : r.details;
+          items = Array.isArray(detailsRaw) ? detailsRaw : [];
         }
       } catch (e) {
-        console.warn('Erro ao ler itens do pedido:', r.id);
+        console.warn('Erro itens pedido:', r.id);
       }
 
       return {
-        id: String(r.id),
-        vtr: String(r.vtr),
-        timestamp: r.timestamp,
+        id: String(r.id || 'N/A'),
+        vtr: String(r.vtr || 'S/V'),
+        timestamp: r.timestamp || new Date().toISOString(),
         status: (r.status || 'Pendente') as any,
-        items: Array.isArray(items) ? items : []
+        items: items
       };
     });
 
-    // Salva no cache local
     localStorage.setItem(STORAGE_KEYS.MATERIALS, JSON.stringify(materials));
     localStorage.setItem(STORAGE_KEYS.REQUESTS, JSON.stringify(requests));
 
     return { materials, requests };
   } catch (error) {
-    console.error('Erro ao buscar dados remotos:', error);
+    clearTimeout(timeoutId);
+    console.error('Erro ao buscar dados:', error);
     return null;
   }
 };
@@ -62,14 +75,14 @@ export const initializeMaterials = (): Material[] => {
 
   return RAW_STRING.split('\n').map((line) => {
     const parts = line.trim().split('\t');
-    const code = parts[0]?.trim() || 'S/C';
+    const code = parts[0]?.trim() || '';
     return {
       id: code,
       code: code,
       name: parts.slice(1).join('\t')?.trim() || 'Material sem nome',
       stock: 0, 
     };
-  });
+  }).filter(m => m.code !== '');
 };
 
 export const saveMaterials = (materials: Material[]) => {
@@ -113,18 +126,17 @@ export const syncToGoogleSheets = async (data: { materials: Material[], requests
       }))
     };
 
-    // Usamos blob para garantir compatibilidade com o Google Apps Script
-    const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(payload)], { type: 'text/plain;charset=utf-8' });
     
     await fetch(url, {
       method: 'POST',
-      mode: 'no-cors', // Necessário para evitar pre-flight do Google
+      mode: 'no-cors', 
       body: blob,
     });
 
     return true;
   } catch (error) {
-    console.error('Erro na sincronização:', error);
+    console.error('Erro sync:', error);
     return false;
   }
 };
