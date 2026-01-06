@@ -9,33 +9,45 @@ const STORAGE_KEYS = {
 };
 
 /**
- * Busca dados da planilha com timeout de segurança
+ * Busca dados da planilha com timeout de segurança e remove duplicidade
  */
 export const fetchRemoteData = async (): Promise<{ materials: Material[], requests: MaterialRequest[] } | null> => {
   const url = GOOGLE_SHEETS_WEBAPP_URL;
   if (!url) return null;
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 segundos de timeout
+  const timeoutId = setTimeout(() => controller.abort(), 12000); // 12 segundos
 
   try {
-    const response = await fetch(`${url}?t=${Date.now()}`, { signal: controller.signal });
+    const response = await fetch(`${url}?t=${Date.now()}`, { 
+      signal: controller.signal,
+      cache: 'no-store'
+    });
     clearTimeout(timeoutId);
     
     if (!response.ok) throw new Error('Servidor indisponível');
     
     const data = await response.json();
     
-    // Processamento de materiais
-    const materials: Material[] = (data.materials || []).map((m: any) => {
+    // Processamento de materiais com DEDUPLICAÇÃO por código
+    const materialsMap = new Map<string, Material>();
+    
+    (data.materials || []).forEach((m: any) => {
       const codeStr = String(m.code || '').trim();
-      return {
-        id: codeStr, // O ID deve ser idêntico ao código para facilitar a busca
-        code: codeStr,
-        name: String(m.name || 'Sem descrição').trim(),
-        stock: Number(m.stock) || 0
-      };
-    }).filter((m: Material) => m.code !== '');
+      if (!codeStr) return;
+      
+      // Se o código já existe, mantemos apenas um (ou poderíamos somar, mas geralmente é erro de cadastro na planilha)
+      if (!materialsMap.has(codeStr)) {
+        materialsMap.set(codeStr, {
+          id: codeStr,
+          code: codeStr,
+          name: String(m.name || 'Sem descrição').trim(),
+          stock: Number(m.stock) || 0
+        });
+      }
+    });
+
+    const materials = Array.from(materialsMap.values());
 
     // Processamento de solicitações
     const requests: MaterialRequest[] = (data.requests || []).map((r: any) => {
@@ -73,16 +85,24 @@ export const initializeMaterials = (): Material[] => {
   const stored = localStorage.getItem(STORAGE_KEYS.MATERIALS);
   if (stored) return JSON.parse(stored);
 
-  return RAW_STRING.split('\n').map((line) => {
+  const materialsMap = new Map<string, Material>();
+  
+  RAW_STRING.split('\n').forEach((line) => {
     const parts = line.trim().split('\t');
     const code = parts[0]?.trim() || '';
-    return {
-      id: code,
-      code: code,
-      name: parts.slice(1).join('\t')?.trim() || 'Material sem nome',
-      stock: 0, 
-    };
-  }).filter(m => m.code !== '');
+    if (!code) return;
+
+    if (!materialsMap.has(code)) {
+      materialsMap.set(code, {
+        id: code,
+        code: code,
+        name: parts.slice(1).join('\t')?.trim() || 'Material sem nome',
+        stock: 0, 
+      });
+    }
+  });
+
+  return Array.from(materialsMap.values());
 };
 
 export const saveMaterials = (materials: Material[]) => {
@@ -126,9 +146,10 @@ export const syncToGoogleSheets = async (data: { materials: Material[], requests
       }))
     };
 
+    // Usando text/plain para evitar problemas de CORS preflight no Google Script
     const blob = new Blob([JSON.stringify(payload)], { type: 'text/plain;charset=utf-8' });
     
-    await fetch(url, {
+    const response = await fetch(url, {
       method: 'POST',
       mode: 'no-cors', 
       body: blob,

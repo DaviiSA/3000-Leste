@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import Layout from './components/Layout';
 import AdminPanel from './components/AdminPanel';
 import RequestForm from './components/RequestForm';
@@ -23,9 +23,13 @@ const App: React.FC = () => {
   const [passInput, setPassInput] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  
+  // Ref para evitar que atualizações de rede sobrescrevam alterações locais pendentes
+  const pendingSyncRef = useRef<boolean>(false);
 
-  // Carrega dados e garante que o estado de sincronismo seja desativado ao fim
   const loadGlobalData = useCallback(async (isManual = true) => {
+    if (pendingSyncRef.current && !isManual) return; // Não carrega se houver sync pendente
+    
     if (isManual) setIsSyncing(true);
     
     try {
@@ -34,28 +38,24 @@ const App: React.FC = () => {
         setMaterials(remote.materials);
         setRequests(remote.requests);
       } else {
-        // Se falhar o remoto, inicializa com local
-        if (materials.length === 0) {
-          setMaterials(initializeMaterials());
-          setRequests(getRequests());
-        }
+        // Fallback local apenas se a lista estiver vazia
+        setMaterials(prev => prev.length > 0 ? prev : initializeMaterials());
+        setRequests(prev => prev.length > 0 ? prev : getRequests());
       }
     } catch (e) {
       console.error("Erro no carregamento:", e);
     } finally {
-      setIsSyncing(false); // Sempre desativa o indicador de sincronismo
-      setIsLoading(false); // Sempre desativa o loader inicial
+      setIsSyncing(false);
+      setIsLoading(false);
     }
-  }, [materials.length]);
+  }, []);
 
   useEffect(() => {
     loadGlobalData(true);
-    // Auto-refresh a cada 2 minutos
-    const interval = setInterval(() => loadGlobalData(false), 120000);
+    const interval = setInterval(() => loadGlobalData(false), 180000); // 3 min
     return () => clearInterval(interval);
   }, [loadGlobalData]);
 
-  // Saldo efetivo (Estoque total menos itens em pedidos pendentes)
   const materialsWithEffectiveStock = useMemo(() => {
     return materials.map(m => {
       const reserved = requests
@@ -72,23 +72,28 @@ const App: React.FC = () => {
     });
   }, [materials, requests]);
 
-  // Função central para disparar sincronização após mudanças
   const triggerSync = async (updatedMaterials: Material[], updatedRequests: MaterialRequest[]) => {
     setIsSyncing(true);
-    await syncToGoogleSheets({ materials: updatedMaterials, requests: updatedRequests });
+    pendingSyncRef.current = true;
     
-    // Pequena pausa para o Google finalizar antes de relermos
+    const success = await syncToGoogleSheets({ materials: updatedMaterials, requests: updatedRequests });
+    
+    // Aguarda um tempo maior para o Google Sheets processar antes de ler de volta
     setTimeout(() => {
+      pendingSyncRef.current = false;
       loadGlobalData(false);
-    }, 1500);
+    }, 3000);
   };
 
   const handleUpdateStock = (id: string, newStock: number) => {
     const val = Math.max(0, newStock);
     const updated = materials.map(m => m.id === id ? { ...m, stock: val } : m);
     
+    // Atualiza estado local imediatamente para feedback visual instantâneo
     setMaterials(updated);
     saveMaterials(updated);
+    
+    // Sincroniza em background
     triggerSync(updated, requests);
   };
 
@@ -150,8 +155,8 @@ const App: React.FC = () => {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4">
         <Loader2 size={48} className="text-blue-600 animate-spin mb-4" />
-        <h2 className="text-xl font-bold text-gray-700">Linha Viva Leste</h2>
-        <p className="text-sm text-gray-400 font-medium">Conectando ao banco de dados...</p>
+        <h2 className="text-xl font-bold text-gray-800 tracking-tight">Linha Viva Leste</h2>
+        <p className="text-sm text-gray-400 font-medium">Sincronizando com servidor DCMD...</p>
       </div>
     );
   }
@@ -168,11 +173,11 @@ const App: React.FC = () => {
                  <button 
                    onClick={() => loadGlobalData(true)}
                    disabled={isSyncing}
-                   className={`inline-flex items-center gap-2 text-[10px] font-bold px-3 py-1.5 rounded-full uppercase tracking-widest transition-all ${
-                     isSyncing ? 'bg-blue-600 text-white animate-pulse' : 'text-blue-600 bg-blue-50 hover:bg-blue-100'
+                   className={`inline-flex items-center gap-2 text-[10px] font-bold px-4 py-2 rounded-full uppercase tracking-widest transition-all ${
+                     isSyncing ? 'bg-blue-600 text-white animate-pulse' : 'text-blue-600 bg-blue-50 hover:bg-blue-100 shadow-sm'
                    }`}
                  >
-                   <RefreshCw size={10} className={isSyncing ? 'animate-spin' : ''} />
+                   <RefreshCw size={12} className={isSyncing ? 'animate-spin' : ''} />
                    {isSyncing ? 'Sincronizando...' : 'Sincronizar Agora'}
                  </button>
                </div>
