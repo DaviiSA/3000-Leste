@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Layout from './components/Layout';
 import AdminPanel from './components/AdminPanel';
 import RequestForm from './components/RequestForm';
@@ -12,7 +12,7 @@ import {
   syncToGoogleSheets,
   fetchRemoteData 
 } from './services/dataService';
-import { ADMIN_PASSWORD, ENERGISA_COLORS, GOOGLE_SHEETS_WEBAPP_URL } from './constants';
+import { ADMIN_PASSWORD } from './constants';
 import { ShieldAlert, UserCheck, Lock, ArrowRight, Database, Loader2, RefreshCw } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -24,15 +24,13 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Função para carregar dados da planilha
-  const loadGlobalData = useCallback(async () => {
-    setIsSyncing(true);
+  const loadGlobalData = useCallback(async (showLoading = true) => {
+    if (showLoading) setIsSyncing(true);
     const remote = await fetchRemoteData();
     if (remote) {
       setMaterials(remote.materials);
       setRequests(remote.requests);
     } else {
-      // Fallback para local se a rede falhar
       setMaterials(initializeMaterials());
       setRequests(getRequests());
     }
@@ -42,41 +40,39 @@ const App: React.FC = () => {
 
   useEffect(() => {
     loadGlobalData();
-    // Opcional: Polling a cada 2 minutos para manter sincronizado sem refresh manual
-    const interval = setInterval(loadGlobalData, 120000);
-    return () => clearInterval(interval);
   }, [loadGlobalData]);
 
-  // Calcula o saldo disponível subtraindo o que já foi solicitado e está pendente
-  const materialsWithEffectiveStock = materials.map(m => {
-    const reserved = requests
-      .filter(r => r.status === 'Pendente')
-      .reduce((acc, req) => {
-        const item = req.items.find(i => i.materialId === m.id);
-        return acc + (item ? item.quantity : 0);
-      }, 0);
-    
-    return {
-      ...m,
-      availableStock: Math.max(0, m.stock - reserved)
-    };
-  });
+  // Cálculo de estoque disponível (Estoque Total - Quantidades em pedidos Pendentes)
+  const materialsWithEffectiveStock = useMemo(() => {
+    return materials.map(m => {
+      const reserved = requests
+        .filter(r => r.status === 'Pendente')
+        .reduce((acc, req) => {
+          const item = req.items.find(i => i.materialId === m.id);
+          return acc + (item ? item.quantity : 0);
+        }, 0);
+      
+      return {
+        ...m,
+        availableStock: Math.max(0, m.stock - reserved)
+      };
+    });
+  }, [materials, requests]);
 
   const triggerSync = async (updatedMaterials: Material[], updatedRequests: MaterialRequest[]) => {
     setIsSyncing(true);
-    try {
-      const success = await syncToGoogleSheets({ materials: updatedMaterials, requests: updatedRequests });
-      if (success) {
-        // Após sincronizar (enviar), buscamos novamente para garantir que estamos com a versão final da planilha
-        await loadGlobalData();
-      }
-    } finally {
+    const success = await syncToGoogleSheets({ materials: updatedMaterials, requests: updatedRequests });
+    if (success) {
+      // Pequeno delay para o Google finalizar a escrita antes de lermos de volta
+      setTimeout(() => loadGlobalData(false), 1500);
+    } else {
       setIsSyncing(false);
     }
   };
 
   const handleUpdateStock = (id: string, newStock: number) => {
     const updated = materials.map(m => m.id === id ? { ...m, stock: Math.max(0, newStock) } : m);
+    // Atualização otimista do estado local
     setMaterials(updated);
     saveMaterials(updated);
     triggerSync(updated, requests);
@@ -84,7 +80,7 @@ const App: React.FC = () => {
 
   const handleAddRequest = async (vtr: string, items: RequestedItem[]) => {
     const newRequest: MaterialRequest = {
-      id: `PED-${Math.random().toString(36).substr(2, 4).toUpperCase()}`,
+      id: `PED-${Math.random().toString(36).substr(2, 6).toUpperCase()}`,
       vtr,
       timestamp: new Date().toISOString(),
       items,
@@ -139,8 +135,8 @@ const App: React.FC = () => {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4">
         <Loader2 size={48} className="text-blue-600 animate-spin mb-4" />
-        <h2 className="text-xl font-bold text-gray-700">Sincronizando Inventário...</h2>
-        <p className="text-sm text-gray-400">Buscando dados da Planilha DCMD</p>
+        <h2 className="text-xl font-bold text-gray-700">Iniciando Sistema...</h2>
+        <p className="text-sm text-gray-400">Aguardando resposta do servidor DCMD</p>
       </div>
     );
   }
@@ -154,7 +150,7 @@ const App: React.FC = () => {
                <h2 className="text-3xl font-extrabold text-gray-800 tracking-tight">Linha Viva Leste</h2>
                <p className="text-gray-500 max-w-xs mx-auto text-sm font-medium">Sistema DCMD de Controle de Materiais</p>
                <button 
-                 onClick={loadGlobalData}
+                 onClick={() => loadGlobalData()}
                  className="mt-4 inline-flex items-center gap-2 text-[10px] font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-full hover:bg-blue-100 transition-colors uppercase tracking-widest"
                >
                  <RefreshCw size={10} className={isSyncing ? 'animate-spin' : ''} />
@@ -229,7 +225,7 @@ const App: React.FC = () => {
                {isSyncing ? (
                  <>
                    <Loader2 size={16} className="animate-spin" />
-                   Sincronizando com Planilha...
+                   Sincronizando...
                  </>
                ) : (
                  <>
@@ -252,7 +248,7 @@ const App: React.FC = () => {
           <div className="space-y-4">
             <div className="flex justify-between items-center mb-2 px-1">
                <button 
-                 onClick={loadGlobalData}
+                 onClick={() => loadGlobalData()}
                  className="flex items-center gap-1.5 text-[10px] font-bold text-gray-400 hover:text-blue-600 transition-colors uppercase tracking-widest"
                >
                  <RefreshCw size={10} className={isSyncing ? 'animate-spin' : ''} />
