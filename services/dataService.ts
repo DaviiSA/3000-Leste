@@ -9,14 +9,14 @@ const STORAGE_KEYS = {
 };
 
 /**
- * Busca dados da planilha com timeout de segurança e remove duplicidade
+ * Busca dados da planilha com timeout e proteção contra duplicidade
  */
-export const fetchRemoteData = async (): Promise<{ materials: Material[], requests: MaterialRequest[] } | null> => {
+export const fetchRemoteData = async (): Promise<{ materials?: Material[], requests?: MaterialRequest[] } | null> => {
   const url = GOOGLE_SHEETS_WEBAPP_URL;
   if (!url) return null;
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 12000); // 12 segundos
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
 
   try {
     const response = await fetch(`${url}?t=${Date.now()}`, { 
@@ -28,65 +28,71 @@ export const fetchRemoteData = async (): Promise<{ materials: Material[], reques
     if (!response.ok) throw new Error('Servidor indisponível');
     
     const data = await response.json();
-    
-    // Processamento de materiais com DEDUPLICAÇÃO por código
-    const materialsMap = new Map<string, Material>();
-    
-    (data.materials || []).forEach((m: any) => {
-      const codeStr = String(m.code || '').trim();
-      if (!codeStr) return;
-      
-      // Se o código já existe, mantemos apenas um (ou poderíamos somar, mas geralmente é erro de cadastro na planilha)
-      if (!materialsMap.has(codeStr)) {
-        materialsMap.set(codeStr, {
-          id: codeStr,
-          code: codeStr,
-          name: String(m.name || 'Sem descrição').trim(),
-          stock: Number(m.stock) || 0
-        });
-      }
-    });
+    const result: { materials?: Material[], requests?: MaterialRequest[] } = {};
 
-    const materials = Array.from(materialsMap.values());
-
-    // Processamento de solicitações
-    const requests: MaterialRequest[] = (data.requests || []).map((r: any) => {
-      let items: RequestedItem[] = [];
-      try {
-        if (r.details) {
-          const detailsRaw = typeof r.details === 'string' ? JSON.parse(r.details) : r.details;
-          items = Array.isArray(detailsRaw) ? detailsRaw : [];
+    // 1. Processamento de materiais com DEDUPLICAÇÃO ABSOLUTA por código
+    if (data.materials && Array.isArray(data.materials)) {
+      const materialsMap = new Map<string, Material>();
+      data.materials.forEach((m: any) => {
+        const codeStr = String(m.code || '').trim();
+        if (!codeStr || codeStr === 'undefined' || codeStr === 'null') return;
+        
+        if (!materialsMap.has(codeStr)) {
+          materialsMap.set(codeStr, {
+            id: codeStr,
+            code: codeStr,
+            name: String(m.name || 'Sem Descrição').trim(),
+            stock: Math.max(0, Number(m.stock) || 0)
+          });
         }
-      } catch (e) {
-        console.warn('Erro itens pedido:', r.id);
-      }
+      });
+      result.materials = Array.from(materialsMap.values());
+      localStorage.setItem(STORAGE_KEYS.MATERIALS, JSON.stringify(result.materials));
+    }
 
-      return {
-        id: String(r.id || 'N/A'),
-        vtr: String(r.vtr || 'S/V'),
-        timestamp: r.timestamp || new Date().toISOString(),
-        status: (r.status || 'Pendente') as any,
-        items: items
-      };
-    });
+    // 2. Processamento de solicitações
+    if (data.requests && Array.isArray(data.requests)) {
+      result.requests = data.requests.map((r: any) => {
+        let items: RequestedItem[] = [];
+        try {
+          if (r.details) {
+            const detailsRaw = typeof r.details === 'string' ? JSON.parse(r.details) : r.details;
+            items = Array.isArray(detailsRaw) ? detailsRaw : [];
+          }
+        } catch (e) {
+          console.warn('Erro ao processar itens:', r.id);
+        }
 
-    localStorage.setItem(STORAGE_KEYS.MATERIALS, JSON.stringify(materials));
-    localStorage.setItem(STORAGE_KEYS.REQUESTS, JSON.stringify(requests));
+        return {
+          id: String(r.id || `PED-${Date.now()}`),
+          vtr: String(r.vtr || 'S/V'),
+          timestamp: r.timestamp || new Date().toISOString(),
+          status: (r.status || 'Pendente') as any,
+          items: items
+        };
+      }).filter(r => r.items.length > 0); // Filtra pedidos vazios por segurança
+      
+      localStorage.setItem(STORAGE_KEYS.REQUESTS, JSON.stringify(result.requests));
+    }
 
-    return { materials, requests };
+    return result;
   } catch (error) {
     clearTimeout(timeoutId);
-    console.error('Erro ao buscar dados:', error);
+    console.error('Erro ao buscar dados remotos:', error);
     return null;
   }
 };
 
 export const initializeMaterials = (): Material[] => {
   const stored = localStorage.getItem(STORAGE_KEYS.MATERIALS);
-  if (stored) return JSON.parse(stored);
+  if (stored) {
+    const parsed = JSON.parse(stored) as Material[];
+    const map = new Map<string, Material>();
+    parsed.forEach(m => { if(!map.has(m.code)) map.set(m.code, m); });
+    return Array.from(map.values());
+  }
 
   const materialsMap = new Map<string, Material>();
-  
   RAW_STRING.split('\n').forEach((line) => {
     const parts = line.trim().split('\t');
     const code = parts[0]?.trim() || '';
@@ -142,14 +148,13 @@ export const syncToGoogleSheets = async (data: { materials: Material[], requests
         vtr: r.vtr,
         timestamp: r.timestamp,
         status: r.status,
-        itemDetails: JSON.stringify(r.items)
+        details: JSON.stringify(r.items)
       }))
     };
 
-    // Usando text/plain para evitar problemas de CORS preflight no Google Script
     const blob = new Blob([JSON.stringify(payload)], { type: 'text/plain;charset=utf-8' });
     
-    const response = await fetch(url, {
+    await fetch(url, {
       method: 'POST',
       mode: 'no-cors', 
       body: blob,

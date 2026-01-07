@@ -2,11 +2,11 @@
 import React, { useState } from 'react';
 import { Material, RequestedItem } from '../types';
 import { VTRS } from '../constants';
-import { Search, Plus, Trash2, Send, ChevronRight, PackageOpen } from 'lucide-react';
+import { Search, Plus, Trash2, Send, ChevronRight, PackageOpen, Loader2, Minus } from 'lucide-react';
 
 interface RequestFormProps {
   materials: (Material & { availableStock: number })[];
-  onSubmit: (vtr: string, items: RequestedItem[]) => void;
+  onSubmit: (vtr: string, items: RequestedItem[]) => Promise<void> | void;
 }
 
 const RequestForm: React.FC<RequestFormProps> = ({ materials, onSubmit }) => {
@@ -14,6 +14,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ materials, onSubmit }) => {
   const [selectedVtr, setSelectedVtr] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [cart, setCart] = useState<RequestedItem[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const availableMaterials = materials.filter(m => 
     m.availableStock > 0 && (
@@ -31,7 +32,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ materials, onSubmit }) => {
       if (existing.quantity < material.availableStock) {
         setCart(cart.map(i => i.materialId === materialId ? { ...i, quantity: i.quantity + 1 } : i));
       } else {
-        alert(`Saldo insuficiente! Há apenas ${material.availableStock} unidades livres deste item.`);
+        alert(`Saldo insuficiente! Há apenas ${material.availableStock} unidades livres.`);
       }
     } else {
       setCart([...cart, { materialId, quantity: 1 }]);
@@ -50,7 +51,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ materials, onSubmit }) => {
         const newQty = Math.max(1, Math.min(item.quantity + delta, max));
         
         if (delta > 0 && item.quantity >= max) {
-          alert(`Limite de saldo livre atingido (${max}).`);
+          alert(`Limite de saldo atingido (${max}).`);
         }
         
         return { ...item, quantity: newQty };
@@ -59,7 +60,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ materials, onSubmit }) => {
     }));
   };
 
-  const handleFinish = () => {
+  const handleFinish = async () => {
     if (!selectedVtr) {
       alert('Selecione uma viatura.');
       setStep(1);
@@ -69,10 +70,18 @@ const RequestForm: React.FC<RequestFormProps> = ({ materials, onSubmit }) => {
       alert('Selecione ao menos um material.');
       return;
     }
-    onSubmit(selectedVtr, cart);
-    setCart([]);
-    setSelectedVtr('');
-    setStep(1);
+    
+    setIsSubmitting(true);
+    try {
+      await onSubmit(selectedVtr, cart);
+      setCart([]);
+      setSelectedVtr('');
+      setStep(1);
+    } catch (e) {
+      alert("Falha ao enviar solicitação. Tente novamente.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -131,7 +140,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ materials, onSubmit }) => {
               {availableMaterials.length === 0 ? (
                 <div className="py-12 text-center text-gray-400">
                   <PackageOpen size={48} className="mx-auto mb-2 opacity-20" />
-                  <p>Nenhum material disponível para reserva.</p>
+                  <p>Nenhum material disponível no estoque.</p>
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -140,7 +149,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ materials, onSubmit }) => {
                       <div className="flex-1 mr-4">
                         <p className="text-sm font-bold text-gray-800 line-clamp-1">{mat.name}</p>
                         <p className="text-[10px] text-gray-400 font-mono uppercase">
-                          Cod: {mat.code} • <span className="text-green-600 font-bold">SALDO LIVRE: {mat.availableStock}</span>
+                          Cod: {mat.code} • <span className="text-green-600 font-bold">SALDO: {mat.availableStock}</span>
                         </p>
                       </div>
                       <button
@@ -163,7 +172,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ materials, onSubmit }) => {
               cart.length > 0 ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-200 text-gray-400 cursor-not-allowed'
             }`}
           >
-            Ver Carrinho ({cart.length} itens)
+            Ver Itens Selecionados ({cart.length})
             <ChevronRight size={20} />
           </button>
         </div>
@@ -184,7 +193,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ materials, onSubmit }) => {
                   <div key={item.materialId} className="flex items-center justify-between bg-gray-50 p-4 rounded-xl border border-gray-100">
                     <div className="flex-1">
                       <p className="text-sm font-bold text-gray-800">{material?.name}</p>
-                      <p className="text-xs text-gray-500">Saldo Livre Máximo: {material?.availableStock}</p>
+                      <p className="text-xs text-gray-500">Saldo Livre: {material?.availableStock}</p>
                     </div>
                     <div className="flex items-center gap-4">
                       <div className="flex items-center bg-white rounded-lg border border-gray-200 p-1">
@@ -192,7 +201,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ materials, onSubmit }) => {
                           onClick={() => updateQuantity(item.materialId, -1)}
                           className="p-1.5 hover:bg-gray-100 rounded text-gray-500"
                         >
-                          <MinusIcon size={14} />
+                          <Minus size={14} />
                         </button>
                         <span className="w-8 text-center font-bold text-sm">{item.quantity}</span>
                         <button 
@@ -217,13 +226,19 @@ const RequestForm: React.FC<RequestFormProps> = ({ materials, onSubmit }) => {
             <div className="flex flex-col gap-3">
               <button
                 onClick={handleFinish}
-                className="w-full py-4 bg-green-600 text-white rounded-2xl flex items-center justify-center gap-2 font-bold shadow-lg hover:bg-green-700 transition-all"
+                disabled={isSubmitting}
+                className="w-full py-4 bg-green-600 text-white rounded-2xl flex items-center justify-center gap-2 font-bold shadow-lg hover:bg-green-700 transition-all disabled:opacity-50"
               >
-                <Send size={20} />
-                Confirmar e Enviar
+                {isSubmitting ? (
+                  <Loader2 size={20} className="animate-spin" />
+                ) : (
+                  <Send size={20} />
+                )}
+                {isSubmitting ? 'Enviando...' : 'Confirmar e Enviar'}
               </button>
               <button
                 onClick={() => setStep(2)}
+                disabled={isSubmitting}
                 className="w-full py-4 bg-gray-100 text-gray-600 rounded-2xl font-bold hover:bg-gray-200 transition-all"
               >
                 Adicionar mais itens
@@ -235,10 +250,6 @@ const RequestForm: React.FC<RequestFormProps> = ({ materials, onSubmit }) => {
     </div>
   );
 };
-
-const MinusIcon = ({ size, className }: { size?: number, className?: string }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-);
 
 const ClipboardList = ({ size, className }: { size?: number, className?: string }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><path d="M12 11h4"></path><path d="M12 16h4"></path><path d="M8 11h.01"></path><path d="M8 16h.01"></path></svg>
