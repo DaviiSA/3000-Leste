@@ -95,29 +95,29 @@ const App: React.FC = () => {
   };
 
   const handleAddRequest = async (vtr: string, items: RequestedItem[]) => {
-    // 1. Gerar movimentações de saída
+    // 1. Gerar movimentações de saída (Reserva imediata de estoque)
     const newMovements: StockMovement[] = items.map(item => ({
       id: `MOV-${Date.now()}-${item.materialId}`,
       materialId: item.materialId,
       type: 'Saída',
       quantity: item.quantity,
       timestamp: new Date().toISOString(),
-      reason: `Solicitação VTR ${vtr}`
+      reason: `Reserva VTR ${vtr} (Pendente)`
     }));
 
-    // 2. Abatimento local do estoque
+    // 2. Abatimento local do estoque (Reserva)
     const updatedMaterials = materials.map(m => {
       const r = items.find(i => i.materialId === m.id);
       return r ? { ...m, stock: Math.max(0, m.stock - r.quantity) } : m;
     });
 
-    // 3. Novo pedido
+    // 3. Novo pedido inicia como PENDENTE
     const newRequest: MaterialRequest = {
       id: `PED-${Date.now().toString(36).toUpperCase()}`,
       vtr,
       timestamp: new Date().toISOString(),
       items,
-      status: 'Atendido'
+      status: 'Pendente'
     };
     
     const updatedRequests = [...requests, newRequest];
@@ -131,7 +131,7 @@ const App: React.FC = () => {
     saveMovements(updatedMovs);
     
     await triggerSync(updatedMaterials, updatedRequests, updatedMovs);
-    alert(`Sucesso! Pedido da VTR ${vtr} enviado e estoque atualizado.`);
+    alert(`Solicitação da VTR ${vtr} enviada com sucesso! Aguarde a confirmação do administrativo.`);
   };
 
   const handleUpdateRequestStatus = (requestId: string, status: 'Atendido' | 'Cancelado') => {
@@ -140,8 +140,20 @@ const App: React.FC = () => {
 
     const updatedRequests = requests.map(req => {
       if (req.id === requestId) {
+        if (status === 'Atendido' && req.status === 'Pendente') {
+          // Apenas atualiza o motivo do log para confirmar o atendimento
+          currentMovements.push({
+            id: `MOV-CONF-${Date.now()}-${req.id}`,
+            materialId: req.items[0]?.materialId || '', // Log genérico de confirmação
+            type: 'Saída',
+            quantity: 0,
+            timestamp: new Date().toISOString(),
+            reason: `Atendimento Confirmado VTR ${req.vtr}`
+          });
+        }
+        
         if (status === 'Cancelado' && req.status !== 'Cancelado') {
-          // Devolver itens ao estoque gera log de entrada
+          // Devolver itens ao estoque gera log de entrada (Estorno)
           req.items.forEach(item => {
             const mIdx = currentMaterials.findIndex(m => m.id === item.materialId);
             if (mIdx !== -1) {
@@ -152,7 +164,7 @@ const App: React.FC = () => {
                 type: 'Entrada',
                 quantity: item.quantity,
                 timestamp: new Date().toISOString(),
-                reason: `Cancelamento Pedido ${req.vtr}`
+                reason: `Cancelamento/Estorno Pedido VTR ${req.vtr}`
               });
             }
           });

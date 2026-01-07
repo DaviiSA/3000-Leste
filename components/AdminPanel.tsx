@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { Material, MaterialRequest, StockMovement } from '../types';
-import { Search, Plus, Minus, CheckCircle, XCircle, Download, Database, ClipboardList, Loader2, History, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
+import { Search, Plus, Minus, CheckCircle, XCircle, Download, Database, ClipboardList, Loader2, History, ArrowUpRight, ArrowDownLeft, AlertCircle } from 'lucide-react';
 import { exportToExcel, syncToGoogleSheets } from '../services/dataService';
 
 interface AdminPanelProps {
@@ -145,10 +145,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
             </div>
           ) : (
             requests.slice().reverse().map(req => (
-              <div key={req.id} className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all animate-in slide-in-from-bottom-2">
+              <div key={req.id} className={`bg-white p-6 rounded-2xl shadow-sm border-2 transition-all animate-in slide-in-from-bottom-2 ${req.status === 'Pendente' ? 'border-blue-100 bg-blue-50/10' : 'border-gray-100'}`}>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
                   <div className="flex items-start gap-4">
-                    <div className="bg-blue-600 text-white p-3 rounded-2xl shadow-lg shadow-blue-50"><ClipboardList size={20} /></div>
+                    <div className={`${req.status === 'Pendente' ? 'bg-blue-600 shadow-blue-100' : req.status === 'Atendido' ? 'bg-green-600 shadow-green-100' : 'bg-gray-400'} text-white p-3 rounded-2xl shadow-lg transition-colors`}><ClipboardList size={20} /></div>
                     <div>
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2.5 py-1 rounded uppercase">VTR {req.vtr}</span>
@@ -160,16 +160,51 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
                   <div className="flex items-center gap-3">
                     <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${
                       req.status === 'Atendido' ? 'bg-green-100 text-green-700' : 
-                      req.status === 'Cancelado' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
+                      req.status === 'Cancelado' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700 shadow-inner'
                     }`}>{req.status}</span>
+                    
                     {req.status === 'Pendente' && (
                       <div className="flex gap-2">
-                        <button onClick={() => onUpdateRequestStatus(req.id, 'Atendido')} className="p-2 bg-green-500 text-white rounded-xl shadow-lg shadow-green-100"><CheckCircle size={18} /></button>
-                        <button onClick={() => onUpdateRequestStatus(req.id, 'Cancelado')} className="p-2 bg-red-500 text-white rounded-xl shadow-lg shadow-red-100"><XCircle size={18} /></button>
+                        <button 
+                          title="Confirmar Atendimento"
+                          onClick={() => onUpdateRequestStatus(req.id, 'Atendido')} 
+                          className="flex items-center gap-1.5 px-3 py-2 bg-green-500 text-white rounded-xl shadow-lg shadow-green-100 hover:bg-green-600 transition-all active:scale-95 text-[10px] font-bold uppercase"
+                        >
+                          <CheckCircle size={14} /> Atender
+                        </button>
+                        <button 
+                          title="Cancelar e Devolver Saldo"
+                          onClick={() => onUpdateRequestStatus(req.id, 'Cancelado')} 
+                          className="flex items-center gap-1.5 px-3 py-2 bg-red-500 text-white rounded-xl shadow-lg shadow-red-100 hover:bg-red-600 transition-all active:scale-95 text-[10px] font-bold uppercase"
+                        >
+                          <XCircle size={14} /> Cancelar
+                        </button>
                       </div>
+                    )}
+                    
+                    {req.status === 'Atendido' && (
+                       <button 
+                        title="Estornar Atendimento"
+                        onClick={() => {
+                          if(confirm("Deseja realmente cancelar este atendimento e devolver os itens ao estoque?")) {
+                            onUpdateRequestStatus(req.id, 'Cancelado');
+                          }
+                        }} 
+                        className="p-2 text-gray-300 hover:text-red-500 transition-colors"
+                      >
+                        <XCircle size={18} />
+                      </button>
                     )}
                   </div>
                 </div>
+                
+                {req.status === 'Pendente' && (
+                  <div className="flex items-center gap-2 text-blue-600 bg-blue-50 px-4 py-2 rounded-xl mb-3 border border-blue-100 text-[10px] font-bold">
+                    <AlertCircle size={14} /> 
+                    <span>SOLICITAÇÃO AGUARDANDO CONFERÊNCIA. O SALDO FOI RESERVADO.</span>
+                  </div>
+                )}
+
                 <div className="bg-gray-50 rounded-2xl p-4 border border-gray-100 space-y-3">
                   {req.items.map((item, idx) => {
                     const material = materials.find(m => m.id === item.materialId);
