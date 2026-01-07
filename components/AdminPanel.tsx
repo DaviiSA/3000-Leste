@@ -1,25 +1,38 @@
 
-import React, { useState } from 'react';
-import { Material, MaterialRequest } from '../types';
-import { Search, Plus, Minus, CheckCircle, XCircle, Download, Database, ClipboardList, Loader2 } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Material, MaterialRequest, StockMovement } from '../types';
+import { Search, Plus, Minus, CheckCircle, XCircle, Download, Database, ClipboardList, Loader2, History, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
 import { exportToExcel, syncToGoogleSheets } from '../services/dataService';
 
 interface AdminPanelProps {
   materials: Material[];
   requests: MaterialRequest[];
+  movements: StockMovement[];
   onUpdateStock: (id: string, newStock: number) => void;
   onUpdateRequestStatus: (requestId: string, status: 'Atendido' | 'Cancelado') => void;
 }
 
-const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, onUpdateStock, onUpdateRequestStatus }) => {
-  const [activeTab, setActiveTab] = useState<'stock' | 'requests'>('stock');
+const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements, onUpdateStock, onUpdateRequestStatus }) => {
+  const [activeTab, setActiveTab] = useState<'stock' | 'requests' | 'history'>('stock');
   const [searchTerm, setSearchTerm] = useState('');
   const [isBusy, setIsBusy] = useState(false);
 
-  const filteredMaterials = materials.filter(m => 
+  const filteredMaterials = useMemo(() => materials.filter(m => 
     m.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
     m.code.includes(searchTerm)
-  );
+  ), [materials, searchTerm]);
+
+  const filteredMovements = useMemo(() => {
+    const sorted = [...movements].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    if (!searchTerm) return sorted;
+    
+    return sorted.filter(m => {
+      const mat = materials.find(mat => mat.id === m.materialId);
+      return mat?.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+             mat?.code.includes(searchTerm) ||
+             m.reason.toLowerCase().includes(searchTerm.toLowerCase());
+    });
+  }, [movements, materials, searchTerm]);
 
   const handleExportStock = () => exportToExcel(materials, 'estoque_lv_leste');
   
@@ -37,84 +50,77 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, onUpdateSt
     exportToExcel(flatten, 'pedidos_lv_leste');
   };
 
+  const handleExportHistory = () => {
+    const flatten = movements.map(m => {
+      const mat = materials.find(mat => mat.id === m.materialId);
+      return {
+        ID: m.id,
+        Data: new Date(m.timestamp).toLocaleString(),
+        Código: mat?.code || '',
+        Material: mat?.name || 'Material Removido',
+        Tipo: m.type,
+        Quantidade: m.quantity,
+        Motivo: m.reason
+      };
+    });
+    exportToExcel(flatten, 'historico_movimentacoes_lv_leste');
+  };
+
   const handleSync = async () => {
     setIsBusy(true);
-    const success = await syncToGoogleSheets({ materials, requests });
+    const success = await syncToGoogleSheets({ materials, requests, movements });
     setIsBusy(false);
     if (success) alert('Dados sincronizados com a planilha Google!');
   };
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
+      {/* Tab Selector & Actions */}
       <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-        <div className="flex p-1 bg-gray-100 rounded-xl w-full sm:w-auto">
-          <button
-            onClick={() => setActiveTab('stock')}
-            className={`flex-1 sm:flex-none px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${activeTab === 'stock' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}
-          >
-            Estoque
-          </button>
-          <button
-            onClick={() => setActiveTab('requests')}
-            className={`flex-1 sm:flex-none px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${activeTab === 'requests' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}
-          >
-            Pedidos ({requests.length})
-          </button>
+        <div className="flex p-1 bg-gray-100 rounded-xl w-full sm:w-auto overflow-x-auto no-scrollbar">
+          <button onClick={() => {setActiveTab('stock'); setSearchTerm('');}} className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${activeTab === 'stock' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500'}`}>Estoque</button>
+          <button onClick={() => {setActiveTab('requests'); setSearchTerm('');}} className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${activeTab === 'requests' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500'}`}>Pedidos ({requests.length})</button>
+          <button onClick={() => {setActiveTab('history'); setSearchTerm('');}} className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${activeTab === 'history' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500'}`}>Histórico</button>
         </div>
         
         <div className="flex gap-2 w-full sm:w-auto">
-          <button 
-            disabled={isBusy}
-            onClick={handleSync}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-50 text-blue-600 rounded-xl text-xs font-bold hover:bg-blue-100 transition-colors uppercase disabled:opacity-50"
-          >
-            {isBusy ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />}
-            Sincronizar
+          <button disabled={isBusy} onClick={handleSync} className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-50 text-blue-600 rounded-xl text-xs font-bold hover:bg-blue-100 uppercase transition-all">
+            {isBusy ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />} Sincronizar
           </button>
-          <button 
-            onClick={activeTab === 'stock' ? handleExportStock : handleExportRequests}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-green-50 text-green-600 rounded-xl text-xs font-bold hover:bg-green-100 transition-colors uppercase"
-          >
-            <Download size={14} />
-            Excel
+          <button onClick={activeTab === 'stock' ? handleExportStock : activeTab === 'requests' ? handleExportRequests : handleExportHistory} className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-green-50 text-green-600 rounded-xl text-xs font-bold hover:bg-green-100 uppercase transition-all">
+            <Download size={14} /> Excel
           </button>
         </div>
       </div>
 
-      {activeTab === 'stock' ? (
+      {/* Search Input */}
+      <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+          <input
+            type="text"
+            placeholder={activeTab === 'stock' ? "Pesquisar material..." : activeTab === 'requests' ? "Buscar por VTR ou item..." : "Filtrar histórico por material ou motivo..."}
+            className="w-full pl-10 pr-4 py-3 bg-gray-50 border-none rounded-xl focus:ring-2 focus:ring-blue-500 text-sm"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Stock Tab */}
+      {activeTab === 'stock' && (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="p-4 border-b border-gray-100">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-              <input
-                type="text"
-                placeholder="Pesquisar estoque..."
-                className="w-full pl-10 pr-4 py-3 bg-gray-50 border-none rounded-xl focus:ring-2 focus:ring-blue-500 text-sm"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
-          </div>
           <div className="overflow-x-auto custom-scrollbar max-h-[60vh] overflow-y-auto">
             <table className="w-full text-left text-sm">
               <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest sticky top-0 z-10">
-                <tr>
-                  <th className="px-6 py-4">Cód</th>
-                  <th className="px-6 py-4">Material</th>
-                  <th className="px-6 py-4">Saldo</th>
-                  <th className="px-6 py-4 text-center">Gestão</th>
-                </tr>
+                <tr><th className="px-6 py-4">Cód</th><th className="px-6 py-4">Material</th><th className="px-6 py-4">Saldo</th><th className="px-6 py-4 text-center">Gestão</th></tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {filteredMaterials.map(item => (
                   <tr key={item.id} className="hover:bg-blue-50/20 transition-colors">
                     <td className="px-6 py-4 font-mono text-[10px] text-gray-400">{item.code}</td>
                     <td className="px-6 py-4 font-semibold text-gray-800">{item.name}</td>
-                    <td className="px-6 py-4">
-                      <span className={`inline-flex items-center justify-center min-w-[32px] px-2 py-1 rounded-full text-[10px] font-black ${item.stock > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                        {item.stock}
-                      </span>
-                    </td>
+                    <td className="px-6 py-4"><span className={`inline-flex items-center justify-center min-w-[32px] px-2 py-1 rounded-full text-[10px] font-black ${item.stock > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{item.stock}</span></td>
                     <td className="px-6 py-4">
                       <div className="flex items-center justify-center gap-2">
                         <button onClick={() => onUpdateStock(item.id, item.stock - 1)} className="p-1.5 hover:bg-red-50 text-red-600 rounded-lg transition-all active:scale-90"><Minus size={16} /></button>
@@ -127,7 +133,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, onUpdateSt
             </table>
           </div>
         </div>
-      ) : (
+      )}
+
+      {/* Requests Tab */}
+      {activeTab === 'requests' && (
         <div className="space-y-4">
           {requests.length === 0 ? (
             <div className="bg-white p-16 text-center rounded-2xl border-2 border-dashed border-gray-200">
@@ -178,6 +187,67 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, onUpdateSt
               </div>
             ))
           )}
+        </div>
+      )}
+
+      {/* History Tab */}
+      {activeTab === 'history' && (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="overflow-x-auto custom-scrollbar max-h-[60vh] overflow-y-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest sticky top-0 z-10">
+                <tr>
+                  <th className="px-6 py-4">Data/Hora</th>
+                  <th className="px-6 py-4">Material</th>
+                  <th className="px-6 py-4">Mov</th>
+                  <th className="px-6 py-4">Qtd</th>
+                  <th className="px-6 py-4">Motivo</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {filteredMovements.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-6 py-12 text-center text-gray-400 italic">Nenhum histórico encontrado.</td>
+                  </tr>
+                ) : (
+                  filteredMovements.map(mov => {
+                    const mat = materials.find(m => m.id === mov.materialId);
+                    return (
+                      <tr key={mov.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-[10px] font-bold text-gray-800">{new Date(mov.timestamp).toLocaleDateString()}</div>
+                          <div className="text-[9px] text-gray-400 font-mono">{new Date(mov.timestamp).toLocaleTimeString()}</div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="text-xs font-bold text-gray-800 line-clamp-1">{mat?.name || 'Material Removido'}</div>
+                          <div className="text-[9px] text-gray-400 font-mono uppercase">{mat?.code}</div>
+                        </td>
+                        <td className="px-6 py-4">
+                          {mov.type === 'Entrada' ? (
+                            <div className="flex items-center gap-1 text-green-600 font-black text-[10px] uppercase">
+                              <ArrowDownLeft size={14} /> Entrada
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1 text-red-600 font-black text-[10px] uppercase">
+                              <ArrowUpRight size={14} /> Saída
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`font-black text-xs ${mov.type === 'Entrada' ? 'text-green-700' : 'text-red-700'}`}>
+                            {mov.type === 'Entrada' ? '+' : '-'}{mov.quantity}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-1 rounded-md font-bold uppercase tracking-tight">{mov.reason}</span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
