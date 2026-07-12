@@ -11,7 +11,10 @@ export const ADMIN_PASSWORD = 'Dsa21';
 export const GOOGLE_SHEETS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbzuhnHUGHFFIXGlRY9XF73o0ppWszf52U2pgeaW5Hquc7VIDz8o2mCt3WN3U0riIpZZnA/exec';
 
 export const VTRS = [
-'1645', '1700', '1711', '1769', '1770', '1811', '1859', '1847','1845', '4001', '4006', '4013', '4014', '4015', '4016', '4020', '4025', '4026', '4027' ,'4028','4029','4030', '4031','4032'];
+  '1645', '1700', '1711', '1769', '1770', '1811', '1859', '1847', 
+  '1845', '4001', '4006', '4013', '4014', '4015', '4016', '4020', 
+  '4025', '4026', '4027', '4028', '4029', '4030', '4031', '4032'
+];
 
 export const RAW_MATERIALS = `
 90394	ABRACADEIRA CINTA AUTOTRAV POLIAM 230X9X3,0MM PRT

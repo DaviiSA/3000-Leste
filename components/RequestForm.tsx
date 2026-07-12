@@ -2,19 +2,23 @@
 import React, { useState } from 'react';
 import { Material, RequestedItem } from '../types';
 import { VTRS } from '../constants';
-import { Search, Plus, Trash2, Send, ChevronRight, PackageOpen, Loader2, Minus } from 'lucide-react';
+import { Search, Plus, Trash2, Send, ChevronRight, PackageOpen, Loader2, Minus, UserCircle2 } from 'lucide-react';
 
 interface RequestFormProps {
   materials: (Material & { availableStock: number })[];
   onSubmit: (vtr: string, items: RequestedItem[]) => Promise<void> | void;
+  mode?: 'vtr' | 'other';
 }
 
-const RequestForm: React.FC<RequestFormProps> = ({ materials, onSubmit }) => {
+const RequestForm: React.FC<RequestFormProps> = ({ materials, onSubmit, mode = 'vtr' }) => {
   const [step, setStep] = useState(1);
   const [selectedVtr, setSelectedVtr] = useState('');
+  const [customRequester, setCustomRequester] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [cart, setCart] = useState<RequestedItem[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const finalRequester = mode === 'vtr' ? selectedVtr : customRequester;
 
   const availableMaterials = materials.filter(m => 
     m.availableStock > 0 && (
@@ -61,8 +65,8 @@ const RequestForm: React.FC<RequestFormProps> = ({ materials, onSubmit }) => {
   };
 
   const handleFinish = async () => {
-    if (!selectedVtr) {
-      alert('Selecione uma viatura.');
+    if (!finalRequester) {
+      alert(mode === 'vtr' ? 'Selecione uma viatura.' : 'Informe o destinatário.');
       setStep(1);
       return;
     }
@@ -73,9 +77,10 @@ const RequestForm: React.FC<RequestFormProps> = ({ materials, onSubmit }) => {
     
     setIsSubmitting(true);
     try {
-      await onSubmit(selectedVtr, cart);
+      await onSubmit(finalRequester, cart);
       setCart([]);
       setSelectedVtr('');
+      setCustomRequester('');
       setStep(1);
     } catch (e) {
       alert("Falha ao enviar solicitação. Tente novamente.");
@@ -97,31 +102,65 @@ const RequestForm: React.FC<RequestFormProps> = ({ materials, onSubmit }) => {
 
       {step === 1 && (
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 text-center">
-          <h2 className="text-xl font-bold mb-6 text-gray-800">Selecione sua VTR</h2>
-          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
-            {VTRS.map(vtr => (
+          {mode === 'vtr' ? (
+            <>
+              <h2 className="text-xl font-bold mb-6 text-gray-800">Selecione sua VTR</h2>
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
+                {VTRS.map(vtr => (
+                  <button
+                    key={vtr}
+                    onClick={() => { setSelectedVtr(vtr); setStep(2); }}
+                    className={`py-3 rounded-xl border-2 font-bold transition-all ${
+                      selectedVtr === vtr 
+                      ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-inner' 
+                      : 'border-gray-100 bg-gray-50 text-gray-600 hover:border-blue-300'
+                    }`}
+                  >
+                    {vtr}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="max-w-md mx-auto py-4">
+              <h2 className="text-xl font-bold mb-2 text-gray-800">Destino do Material</h2>
+              <p className="text-sm text-gray-500 mb-6">Pessoas, Departamentos ou Empresas</p>
+              
+              <div className="relative mb-6">
+                <UserCircle2 className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={24} />
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="Ex: Almoxarifado, João Silva, Logística..."
+                  className="w-full pl-12 pr-4 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl focus:border-blue-500 text-lg font-medium transition-all"
+                  value={customRequester}
+                  onChange={(e) => setCustomRequester(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && customRequester.trim()) setStep(2);
+                  }}
+                />
+              </div>
+
               <button
-                key={vtr}
-                onClick={() => { setSelectedVtr(vtr); setStep(2); }}
-                className={`py-3 rounded-xl border-2 font-bold transition-all ${
-                  selectedVtr === vtr 
-                  ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-inner' 
-                  : 'border-gray-100 bg-gray-50 text-gray-600 hover:border-blue-300'
-                }`}
+                onClick={() => setStep(2)}
+                disabled={!customRequester.trim()}
+                className="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold shadow-lg hover:bg-blue-700 transition-all disabled:opacity-50 disabled:grayscale"
               >
-                {vtr}
+                Prosseguir
               </button>
-            ))}
-          </div>
+            </div>
+          )}
         </div>
       )}
 
       {step === 2 && (
         <div className="space-y-4">
           <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-3">
-            <span className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-lg uppercase tracking-wider">VTR {selectedVtr}</span>
+            <span className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-lg uppercase tracking-wider">
+              {mode === 'vtr' ? `VTR ${selectedVtr}` : customRequester}
+            </span>
             <div className="h-4 w-px bg-gray-200"></div>
-            <button onClick={() => setStep(1)} className="text-xs text-gray-500 hover:underline">Trocar VTR</button>
+            <button onClick={() => setStep(1)} className="text-xs text-gray-500 hover:underline">Trocar</button>
           </div>
 
           <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">

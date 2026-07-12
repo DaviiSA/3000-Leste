@@ -28,4 +28,9 @@ export interface StockMovement {
   reason: string;
 }
 
-export type View = 'Home' | 'Admin' | 'Request';
+export interface VtrStock {
+  vtr: string;
+  items: RequestedItem[];
+}
+
+export type View = 'Home' | 'Admin' | 'Request' | 'Other';

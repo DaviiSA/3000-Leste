@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Layout from './components/Layout';
 import AdminPanel from './components/AdminPanel';
 import RequestForm from './components/RequestForm';
-import { Material, MaterialRequest, View, RequestedItem, StockMovement } from './types';
+import { Material, MaterialRequest, View, RequestedItem, StockMovement, VtrStock } from './types';
 import { 
   initializeMaterials, 
   saveMaterials, 
@@ -11,17 +11,20 @@ import {
   saveRequests, 
   getMovements,
   saveMovements,
+  getVtrStocks,
+  saveVtrStocks,
   syncToGoogleSheets,
   fetchRemoteData 
 } from './services/dataService';
 import { ADMIN_PASSWORD } from './constants';
-import { ShieldAlert, UserCheck, Lock, ArrowRight, Database, Loader2, RefreshCw, Clock } from 'lucide-react';
+import { ShieldAlert, UserCheck, Lock, ArrowRight, Database, Loader2, RefreshCw, Clock, PackageOpen } from 'lucide-react';
 
 const App: React.FC = () => {
   const [view, setView] = useState<View>('Home');
   const [materials, setMaterials] = useState<Material[]>(() => initializeMaterials());
   const [requests, setRequests] = useState<MaterialRequest[]>(() => getRequests());
   const [movements, setMovements] = useState<StockMovement[]>(() => getMovements());
+  const [vtrStocks, setVtrStocks] = useState<VtrStock[]>(() => getVtrStocks());
   const [lastUpdate, setLastUpdate] = useState<string>(new Date().toLocaleTimeString());
   
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
@@ -41,6 +44,7 @@ const App: React.FC = () => {
         if (remote.materials && remote.materials.length > 0) setMaterials(remote.materials);
         if (remote.requests && Array.isArray(remote.requests)) setRequests(remote.requests);
         if (remote.movements && Array.isArray(remote.movements)) setMovements(remote.movements);
+        if (remote.vtrStocks && Array.isArray(remote.vtrStocks)) setVtrStocks(remote.vtrStocks);
         setLastUpdate(new Date().toLocaleTimeString());
       }
     } catch (e) {
@@ -57,10 +61,10 @@ const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [loadGlobalData]);
 
-  const triggerSync = async (mats: Material[], reqs: MaterialRequest[], movs: StockMovement[]) => {
+  const triggerSync = async (mats: Material[], reqs: MaterialRequest[], movs: StockMovement[], vStocks: VtrStock[]) => {
     setIsSyncing(true);
     pendingSyncRef.current = true;
-    await syncToGoogleSheets({ materials: mats, requests: reqs, movements: movs });
+    await syncToGoogleSheets({ materials: mats, requests: reqs, movements: movs, vtrStocks: vStocks });
     setTimeout(() => {
       pendingSyncRef.current = false;
       loadGlobalData(false);
@@ -91,7 +95,7 @@ const App: React.FC = () => {
     setMovements(updatedMovs);
     saveMaterials(updatedMats);
     saveMovements(updatedMovs);
-    triggerSync(updatedMats, requests, updatedMovs);
+    triggerSync(updatedMats, requests, updatedMovs, vtrStocks);
   };
 
   const handleAddRequest = async (vtr: string, items: RequestedItem[]) => {
@@ -102,7 +106,7 @@ const App: React.FC = () => {
       type: 'Saída',
       quantity: item.quantity,
       timestamp: new Date().toISOString(),
-      reason: `Reserva VTR ${vtr} (Pendente)`
+      reason: `Reserva ${vtr} (Pendente)`
     }));
 
     // 2. Abatimento local do estoque (Reserva)
@@ -130,30 +134,69 @@ const App: React.FC = () => {
     saveRequests(updatedRequests);
     saveMovements(updatedMovs);
     
-    await triggerSync(updatedMaterials, updatedRequests, updatedMovs);
-    alert(`Solicitação da VTR ${vtr} enviada com sucesso! Aguarde a confirmação do administrativo.`);
+    await triggerSync(updatedMaterials, updatedRequests, updatedMovs, vtrStocks);
+    alert(`Solicitação para ${vtr} enviada com sucesso! Aguarde a confirmação do administrativo.`);
   };
 
   const handleUpdateRequestStatus = (requestId: string, status: 'Atendido' | 'Cancelado') => {
     let currentMaterials = [...materials];
     let currentMovements = [...movements];
+    let currentVtrStocks = [...vtrStocks];
 
     const updatedRequests = requests.map(req => {
       if (req.id === requestId) {
         if (status === 'Atendido' && req.status === 'Pendente') {
-          // Apenas atualiza o motivo do log para confirmar o atendimento
+          // 1. Log de confirmação
           currentMovements.push({
             id: `MOV-CONF-${Date.now()}-${req.id}`,
-            materialId: req.items[0]?.materialId || '', // Log genérico de confirmação
+            materialId: req.items[0]?.materialId || '',
             type: 'Saída',
             quantity: 0,
             timestamp: new Date().toISOString(),
             reason: `Atendimento Confirmado VTR ${req.vtr}`
           });
+
+          // 2. Incrementar estoque da VTR
+          const vtrIdx = currentVtrStocks.findIndex(vs => vs.vtr === req.vtr);
+          if (vtrIdx === -1) {
+            currentVtrStocks.push({ vtr: req.vtr, items: [...req.items] });
+          } else {
+            const updatedItems = [...currentVtrStocks[vtrIdx].items];
+            req.items.forEach(item => {
+              const itemIdx = updatedItems.findIndex(i => i.materialId === item.materialId);
+              if (itemIdx === -1) {
+                updatedItems.push({ ...item });
+              } else {
+                updatedItems[itemIdx] = { 
+                  ...updatedItems[itemIdx], 
+                  quantity: updatedItems[itemIdx].quantity + item.quantity 
+                };
+              }
+            });
+            currentVtrStocks[vtrIdx] = { ...currentVtrStocks[vtrIdx], items: updatedItems };
+          }
         }
         
         if (status === 'Cancelado' && req.status !== 'Cancelado') {
-          // Devolver itens ao estoque gera log de entrada (Estorno)
+          // Se estava atendido, remove do estoque da VTR
+          if (req.status === 'Atendido') {
+            const vtrIdx = currentVtrStocks.findIndex(vs => vs.vtr === req.vtr);
+            if (vtrIdx !== -1) {
+              const updatedItems = [...currentVtrStocks[vtrIdx].items];
+              req.items.forEach(item => {
+                const itemIdx = updatedItems.findIndex(i => i.materialId === item.materialId);
+                if (itemIdx !== -1) {
+                  updatedItems[itemIdx] = { 
+                    ...updatedItems[itemIdx], 
+                    quantity: Math.max(0, updatedItems[itemIdx].quantity - item.quantity) 
+                  };
+                }
+              });
+              currentVtrStocks[vtrIdx] = { ...currentVtrStocks[vtrIdx], items: updatedItems };
+            }
+          }
+
+          // Devolver itens ao estoque principal
           req.items.forEach(item => {
             const mIdx = currentMaterials.findIndex(m => m.id === item.materialId);
             if (mIdx !== -1) {
@@ -177,10 +220,14 @@ const App: React.FC = () => {
     setMaterials(currentMaterials);
     setRequests(updatedRequests);
     setMovements(currentMovements);
+    setVtrStocks(currentVtrStocks);
+    
     saveMaterials(currentMaterials);
     saveRequests(updatedRequests);
     saveMovements(currentMovements);
-    triggerSync(currentMaterials, updatedRequests, currentMovements);
+    saveVtrStocks(currentVtrStocks);
+    
+    triggerSync(currentMaterials, updatedRequests, currentMovements, currentVtrStocks);
   };
 
   const handleAdminAuth = (e: React.FormEvent) => {
@@ -228,7 +275,7 @@ const App: React.FC = () => {
                </span>
              </div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 w-full max-w-2xl">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 w-full max-w-4xl">
             <button onClick={() => setView('Admin')} className="group p-8 bg-white rounded-3xl shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all border-2 border-transparent hover:border-blue-100 flex flex-col items-center text-center gap-4">
               <div className="p-5 rounded-2xl bg-blue-50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors"><ShieldAlert size={48} /></div>
               <h3 className="text-xl font-bold text-gray-800">Administrador</h3>
@@ -236,8 +283,13 @@ const App: React.FC = () => {
             </button>
             <button onClick={() => setView('Request')} className="group p-8 bg-white rounded-3xl shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all border-2 border-transparent hover:border-orange-100 flex flex-col items-center text-center gap-4">
               <div className="p-5 rounded-2xl bg-orange-50 text-orange-600 group-hover:bg-orange-600 group-hover:text-white transition-colors"><UserCheck size={48} /></div>
-              <h3 className="text-xl font-bold text-gray-800">Solicitação</h3>
+              <h3 className="text-xl font-bold text-gray-800">Viatura</h3>
               <ArrowRight className="mt-2 text-orange-600 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
+            </button>
+            <button onClick={() => setView('Other')} className="group p-8 bg-white rounded-3xl shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all border-2 border-transparent hover:border-green-100 flex flex-col items-center text-center gap-4">
+              <div className="p-5 rounded-2xl bg-green-50 text-green-600 group-hover:bg-green-600 group-hover:text-white transition-colors"><PackageOpen size={48} /></div>
+              <h3 className="text-xl font-bold text-gray-800">Outros</h3>
+              <ArrowRight className="mt-2 text-green-600 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
             </button>
           </div>
         </div>
@@ -268,6 +320,7 @@ const App: React.FC = () => {
               materials={materials} 
               requests={requests} 
               movements={movements}
+              vtrStocks={vtrStocks}
               onUpdateStock={handleUpdateStock}
               onUpdateRequestStatus={handleUpdateRequestStatus}
             />
@@ -279,6 +332,15 @@ const App: React.FC = () => {
         <RequestForm 
           materials={materials.map(m => ({ ...m, availableStock: m.stock }))} 
           onSubmit={handleAddRequest} 
+          mode="vtr"
+        />
+      )}
+
+      {view === 'Other' && (
+        <RequestForm 
+          materials={materials.map(m => ({ ...m, availableStock: m.stock }))} 
+          onSubmit={handleAddRequest} 
+          mode="other"
         />
       )}
     </Layout>

@@ -6,7 +6,7 @@ import { ENERGISA_COLORS } from '../constants';
 interface LayoutProps {
   children: React.ReactNode;
   currentView: string;
-  onNavigate: (view: 'Home' | 'Admin' | 'Request') => void;
+  onNavigate: (view: 'Home' | 'Admin' | 'Request' | 'Other') => void;
 }
 
 const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigate }) => {

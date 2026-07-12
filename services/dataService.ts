@@ -7,6 +7,7 @@ const STORAGE_KEYS = {
   MATERIALS: 'lv_leste_materials',
   REQUESTS: 'lv_leste_requests',
   MOVEMENTS: 'lv_leste_movements',
+  VTR_STOCKS: 'lv_leste_vtr_stocks',
 };
 
 /**
@@ -15,7 +16,8 @@ const STORAGE_KEYS = {
 export const fetchRemoteData = async (): Promise<{ 
   materials?: Material[], 
   requests?: MaterialRequest[],
-  movements?: StockMovement[] 
+  movements?: StockMovement[],
+  vtrStocks?: any[]
 } | null> => {
   const url = GOOGLE_SHEETS_WEBAPP_URL;
   if (!url) return null;
@@ -33,7 +35,7 @@ export const fetchRemoteData = async (): Promise<{
     if (!response.ok) throw new Error('Servidor indisponível');
     
     const data = await response.json();
-    const result: { materials?: Material[], requests?: MaterialRequest[], movements?: StockMovement[] } = {};
+    const result: { materials?: Material[], requests?: MaterialRequest[], movements?: StockMovement[], vtrStocks?: any[] } = {};
 
     // 1. Materiais
     if (data.materials && Array.isArray(data.materials)) {
@@ -73,7 +75,7 @@ export const fetchRemoteData = async (): Promise<{
           status: (r.status || 'Pendente') as any,
           items: items
         };
-      }).filter(r => r.items.length > 0);
+      }).filter((r: MaterialRequest) => r.items.length > 0);
       localStorage.setItem(STORAGE_KEYS.REQUESTS, JSON.stringify(result.requests));
     }
 
@@ -88,6 +90,26 @@ export const fetchRemoteData = async (): Promise<{
         reason: String(m.reason || '')
       }));
       localStorage.setItem(STORAGE_KEYS.MOVEMENTS, JSON.stringify(result.movements));
+    }
+
+    // 4. Estoque VTR
+    if (data.vtrStocks && Array.isArray(data.vtrStocks)) {
+      result.vtrStocks = data.vtrStocks.map((vs: any) => {
+        let items: RequestedItem[] = [];
+        try {
+          if (vs.items) {
+            const itemsRaw = typeof vs.items === 'string' ? JSON.parse(vs.items) : vs.items;
+            items = Array.isArray(itemsRaw) ? itemsRaw : [];
+          }
+        } catch (e) {
+          console.warn('Erro ao processar itens VTR:', vs.vtr);
+        }
+        return {
+          vtr: String(vs.vtr),
+          items: items
+        };
+      });
+      localStorage.setItem(STORAGE_KEYS.VTR_STOCKS, JSON.stringify(result.vtrStocks));
     }
 
     return result;
@@ -131,6 +153,8 @@ export const getRequests = (): MaterialRequest[] => JSON.parse(localStorage.getI
 export const saveRequests = (requests: MaterialRequest[]) => localStorage.setItem(STORAGE_KEYS.REQUESTS, JSON.stringify(requests));
 export const getMovements = (): StockMovement[] => JSON.parse(localStorage.getItem(STORAGE_KEYS.MOVEMENTS) || '[]');
 export const saveMovements = (movements: StockMovement[]) => localStorage.setItem(STORAGE_KEYS.MOVEMENTS, JSON.stringify(movements));
+export const getVtrStocks = (): any[] => JSON.parse(localStorage.getItem(STORAGE_KEYS.VTR_STOCKS) || '[]');
+export const saveVtrStocks = (stocks: any[]) => localStorage.setItem(STORAGE_KEYS.VTR_STOCKS, JSON.stringify(stocks));
 
 export const exportToExcel = (data: any[], fileName: string) => {
   const ws = XLSX.utils.json_to_sheet(data);
@@ -139,7 +163,7 @@ export const exportToExcel = (data: any[], fileName: string) => {
   XLSX.writeFile(wb, `${fileName}.xlsx`);
 };
 
-export const syncToGoogleSheets = async (data: { materials: Material[], requests: MaterialRequest[], movements: StockMovement[] }) => {
+export const syncToGoogleSheets = async (data: { materials: Material[], requests: MaterialRequest[], movements: StockMovement[], vtrStocks: any[] }) => {
   const url = GOOGLE_SHEETS_WEBAPP_URL;
   if (!url) return false;
 
@@ -148,7 +172,8 @@ export const syncToGoogleSheets = async (data: { materials: Material[], requests
       action: 'sync',
       materials: data.materials.map(m => ({ code: m.code, name: m.name, stock: m.stock })),
       requests: data.requests.map(r => ({ id: r.id, vtr: r.vtr, timestamp: r.timestamp, status: r.status, details: JSON.stringify(r.items) })),
-      movements: data.movements.map(m => ({ id: m.id, materialId: m.materialId, type: m.type, quantity: m.quantity, timestamp: m.timestamp, reason: m.reason }))
+      movements: data.movements.map(m => ({ id: m.id, materialId: m.materialId, type: m.type, quantity: m.quantity, timestamp: m.timestamp, reason: m.reason })),
+      vtrStocks: data.vtrStocks.map(vs => ({ vtr: vs.vtr, items: JSON.stringify(vs.items) }))
     };
 
     const blob = new Blob([JSON.stringify(payload)], { type: 'text/plain;charset=utf-8' });

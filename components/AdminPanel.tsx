@@ -1,21 +1,71 @@
 
 import React, { useState, useMemo } from 'react';
-import { Material, MaterialRequest, StockMovement } from '../types';
-import { Search, Plus, Minus, CheckCircle, XCircle, Download, Database, ClipboardList, Loader2, History, ArrowUpRight, ArrowDownLeft, AlertCircle } from 'lucide-react';
+import { Material, MaterialRequest, StockMovement, VtrStock } from '../types';
+import { Search, Plus, Minus, CheckCircle, XCircle, Download, Database, ClipboardList, Loader2, History, ArrowUpRight, ArrowDownLeft, AlertCircle, LayoutDashboard, Truck, ChevronRight } from 'lucide-react';
 import { exportToExcel, syncToGoogleSheets } from '../services/dataService';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 interface AdminPanelProps {
   materials: Material[];
   requests: MaterialRequest[];
   movements: StockMovement[];
+  vtrStocks: VtrStock[];
   onUpdateStock: (id: string, newStock: number) => void;
   onUpdateRequestStatus: (requestId: string, status: 'Atendido' | 'Cancelado') => void;
 }
 
-const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements, onUpdateStock, onUpdateRequestStatus }) => {
-  const [activeTab, setActiveTab] = useState<'stock' | 'requests' | 'history'>('stock');
+const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements, vtrStocks, onUpdateStock, onUpdateRequestStatus }) => {
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'stock' | 'requests' | 'history' | 'vtr_stock'>('dashboard');
+  const [selectedVtr, setSelectedVtr] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [isBusy, setIsBusy] = useState(false);
+
+  const stats = useMemo(() => {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const recent = requests.filter(req => new Date(req.timestamp) >= thirtyDaysAgo && req.status !== 'Cancelado');
+    
+    const totalItems = recent.reduce((acc, req) => acc + req.items.reduce((sum, i) => sum + i.quantity, 0), 0);
+    const totalRequests = recent.length;
+    
+    const requesterCounts: Record<string, number> = {};
+    recent.forEach(req => {
+      requesterCounts[req.vtr] = (requesterCounts[req.vtr] || 0) + 1;
+    });
+    
+    const topRequester = Object.entries(requesterCounts)
+      .sort(([, a], [, b]) => b - a)[0];
+
+    return { totalItems, totalRequests, topRequester: topRequester?.[0] || '---' };
+  }, [requests]);
+
+  const chartData = useMemo(() => {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const recentRequests = requests.filter(req => 
+      new Date(req.timestamp) >= thirtyDaysAgo && req.status !== 'Cancelado'
+    );
+
+    const materialCounts: Record<string, number> = {};
+    
+    recentRequests.forEach(req => {
+      req.items.forEach(item => {
+        const material = materials.find(m => m.id === item.materialId);
+        const name = material?.name || item.materialId;
+        materialCounts[name] = (materialCounts[name] || 0) + item.quantity;
+      });
+    });
+
+    return Object.entries(materialCounts)
+      .map(([name, total]) => ({ 
+        name: name.length > 25 ? name.substring(0, 22) + '...' : name, 
+        fullName: name,
+        total 
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 8);
+  }, [requests, materials]);
 
   const filteredMaterials = useMemo(() => materials.filter(m => 
     m.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -34,13 +84,24 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
     });
   }, [movements, materials, searchTerm]);
 
+  const filteredVtrStocks = useMemo(() => {
+    if (!searchTerm) return vtrStocks;
+    return vtrStocks.filter(vs => 
+      vs.vtr.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      vs.items.some(i => {
+        const mat = materials.find(m => m.id === i.materialId);
+        return mat?.name.toLowerCase().includes(searchTerm.toLowerCase()) || mat?.code.includes(searchTerm);
+      })
+    );
+  }, [vtrStocks, searchTerm, materials]);
+
   const handleExportStock = () => exportToExcel(materials, 'estoque_lv_leste');
   
   const handleExportRequests = () => {
     const flatten = requests.map(r => ({
       ID: r.id,
       Data: new Date(r.timestamp).toLocaleString(),
-      VTR: r.vtr,
+      Destino: r.vtr,
       Status: r.status,
       Itens: r.items.map(i => {
         const mat = materials.find(m => m.id === i.materialId);
@@ -66,9 +127,25 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
     exportToExcel(flatten, 'historico_movimentacoes_lv_leste');
   };
 
+  const handleExportVtrStock = () => {
+    const flatten: any[] = [];
+    vtrStocks.forEach(vs => {
+      vs.items.forEach(item => {
+        const mat = materials.find(m => m.id === item.materialId);
+        flatten.push({
+          Destinatário: vs.vtr,
+          Código: mat?.code || '',
+          Material: mat?.name || '---',
+          Quantidade: item.quantity
+        });
+      });
+    });
+    exportToExcel(flatten, 'estoque_destinatarios_lv_leste');
+  };
+
   const handleSync = async () => {
     setIsBusy(true);
-    const success = await syncToGoogleSheets({ materials, requests, movements });
+    const success = await syncToGoogleSheets({ materials, requests, movements, vtrStocks });
     setIsBusy(false);
     if (success) alert('Dados sincronizados com a planilha Google!');
   };
@@ -78,7 +155,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
       {/* Tab Selector & Actions */}
       <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
         <div className="flex p-1 bg-gray-100 rounded-xl w-full sm:w-auto overflow-x-auto no-scrollbar">
+          <button onClick={() => {setActiveTab('dashboard'); setSearchTerm('');}} className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${activeTab === 'dashboard' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500'}`}>Dashboard</button>
           <button onClick={() => {setActiveTab('stock'); setSearchTerm('');}} className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${activeTab === 'stock' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500'}`}>Estoque</button>
+          <button onClick={() => {setActiveTab('vtr_stock'); setSearchTerm(''); setSelectedVtr(null);}} className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${activeTab === 'vtr_stock' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500'}`}>Estoque VTR</button>
           <button onClick={() => {setActiveTab('requests'); setSearchTerm('');}} className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${activeTab === 'requests' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500'}`}>Pedidos ({requests.length})</button>
           <button onClick={() => {setActiveTab('history'); setSearchTerm('');}} className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${activeTab === 'history' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500'}`}>Histórico</button>
         </div>
@@ -87,25 +166,101 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
           <button disabled={isBusy} onClick={handleSync} className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-50 text-blue-600 rounded-xl text-xs font-bold hover:bg-blue-100 uppercase transition-all">
             {isBusy ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />} Sincronizar
           </button>
-          <button onClick={activeTab === 'stock' ? handleExportStock : activeTab === 'requests' ? handleExportRequests : handleExportHistory} className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-green-50 text-green-600 rounded-xl text-xs font-bold hover:bg-green-100 uppercase transition-all">
+          <button onClick={activeTab === 'stock' ? handleExportStock : activeTab === 'requests' ? handleExportRequests : activeTab === 'vtr_stock' ? handleExportVtrStock : handleExportHistory} className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-green-50 text-green-600 rounded-xl text-xs font-bold hover:bg-green-100 uppercase transition-all">
             <Download size={14} /> Excel
           </button>
         </div>
       </div>
 
-      {/* Search Input */}
-      <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-          <input
-            type="text"
-            placeholder={activeTab === 'stock' ? "Pesquisar material..." : activeTab === 'requests' ? "Buscar por VTR ou item..." : "Filtrar histórico por material ou motivo..."}
-            className="w-full pl-10 pr-4 py-3 bg-gray-50 border-none rounded-xl focus:ring-2 focus:ring-blue-500 text-sm"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
+      {/* Dashboard Tab */}
+      {activeTab === 'dashboard' && (
+        <div className="space-y-6">
+          {/* KPI Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Itens Requisitados</p>
+              <div className="flex items-end gap-2">
+                <span className="text-2xl font-bold text-gray-800">{stats.totalItems}</span>
+                <span className="text-[10px] text-green-600 font-bold mb-1">UNIDADES</span>
+              </div>
+            </div>
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Total de Pedidos</p>
+              <div className="flex items-end gap-2">
+                <span className="text-2xl font-bold text-gray-800">{stats.totalRequests}</span>
+                <span className="text-[10px] text-blue-600 font-bold mb-1">FINALIZADOS</span>
+              </div>
+            </div>
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Maior Solicitante</p>
+              <div className="flex items-end gap-2">
+                <span className="text-2xl font-bold text-gray-800 truncate max-w-[150px]">{stats.topRequester}</span>
+                <span className="text-[10px] text-orange-600 font-bold mb-1">TOP</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+            <div className="flex items-center gap-3 mb-8">
+              <div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><LayoutDashboard size={24} /></div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-800">Materiais mais Requisitados</h3>
+                <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">Últimos 30 dias</p>
+              </div>
+            </div>
+            
+            <div className="h-[450px] w-full">
+              {chartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 60, left: 20, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
+                    <XAxis type="number" hide />
+                    <YAxis 
+                      dataKey="name" 
+                      type="category" 
+                      width={180} 
+                      tick={{ fontSize: 11, fontWeight: 700, fill: '#475569' }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <Tooltip 
+                      cursor={{ fill: '#f8fafc' }}
+                      contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '12px', fontWeight: 'bold' }}
+                      formatter={(value: any, name: any, props: any) => [value, props.payload.fullName]}
+                    />
+                    <Bar dataKey="total" radius={[0, 6, 6, 0]} barSize={24} label={{ position: 'right', fill: '#64748b', fontSize: 12, fontWeight: 800, offset: 10 }}>
+                      {chartData.map((_, index) => (
+                        <Cell key={`cell-${index}`} fill={index === 0 ? '#2563eb' : '#3b82f6'} fillOpacity={1 - (index * 0.1)} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-gray-300">
+                  <AlertCircle size={48} className="mb-2 opacity-20" />
+                  <p className="text-sm font-bold uppercase tracking-widest opacity-50">Sem dados suficientes</p>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Search Input */}
+      {activeTab !== 'dashboard' && (
+        <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+            <input
+              type="text"
+              placeholder={activeTab === 'stock' ? "Pesquisar material..." : activeTab === 'requests' ? "Buscar por destino ou item..." : activeTab === 'vtr_stock' ? "Buscar por VTR ou Material..." : "Filtrar histórico por material ou motivo..."}
+              className="w-full pl-10 pr-4 py-3 bg-gray-50 border-none rounded-xl focus:ring-2 focus:ring-blue-500 text-sm"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Stock Tab */}
       {activeTab === 'stock' && (
@@ -122,9 +277,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
                     <td className="px-6 py-4 font-semibold text-gray-800">{item.name}</td>
                     <td className="px-6 py-4"><span className={`inline-flex items-center justify-center min-w-[32px] px-2 py-1 rounded-full text-[10px] font-black ${item.stock > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{item.stock}</span></td>
                     <td className="px-6 py-4">
-                      <div className="flex items-center justify-center gap-2">
-                        <button onClick={() => onUpdateStock(item.id, item.stock - 1)} className="p-1.5 hover:bg-red-50 text-red-600 rounded-lg transition-all active:scale-90"><Minus size={16} /></button>
-                        <button onClick={() => onUpdateStock(item.id, item.stock + 1)} className="p-1.5 hover:bg-green-50 text-green-600 rounded-lg transition-all active:scale-90"><Plus size={16} /></button>
+                      <div className="flex items-center justify-center">
+                        <input
+                          type="number"
+                          min="0"
+                          className="w-20 px-2 py-1 bg-gray-50 border border-gray-200 rounded-lg text-center font-bold text-gray-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          value={item.stock}
+                          onChange={(e) => onUpdateStock(item.id, parseInt(e.target.value) || 0)}
+                        />
                       </div>
                     </td>
                   </tr>
@@ -151,7 +311,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
                     <div className={`${req.status === 'Pendente' ? 'bg-blue-600 shadow-blue-100' : req.status === 'Atendido' ? 'bg-green-600 shadow-green-100' : 'bg-gray-400'} text-white p-3 rounded-2xl shadow-lg transition-colors`}><ClipboardList size={20} /></div>
                     <div>
                       <div className="flex items-center gap-2 mb-1">
-                        <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2.5 py-1 rounded uppercase">VTR {req.vtr}</span>
+                        <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2.5 py-1 rounded uppercase">{req.vtr}</span>
                         <span className="text-[10px] text-gray-300 font-mono">#{req.id.slice(-5)}</span>
                       </div>
                       <p className="text-[10px] text-gray-500 font-bold uppercase tracking-tight">{new Date(req.timestamp).toLocaleString()}</p>
@@ -225,6 +385,69 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
         </div>
       )}
 
+      {/* VTR Stock Tab */}
+      {activeTab === 'vtr_stock' && (
+        <div className="space-y-4">
+          {!selectedVtr ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+              {filteredVtrStocks.length === 0 ? (
+                <div className="col-span-full bg-white p-12 text-center rounded-2xl border-2 border-dashed border-gray-100">
+                  <Truck className="mx-auto text-gray-200 mb-4 opacity-50" size={48} />
+                  <p className="text-gray-400 font-bold uppercase text-[10px] tracking-widest">Nenhum estoque distribuído</p>
+                </div>
+              ) : (
+                filteredVtrStocks.map(vs => (
+                  <button 
+                    key={vs.vtr} 
+                    onClick={() => setSelectedVtr(vs.vtr)}
+                    className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between group hover:border-blue-300 transition-all"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="p-3 bg-blue-50 text-blue-600 rounded-xl group-hover:bg-blue-600 group-hover:text-white transition-colors"><Truck size={24} /></div>
+                      <div className="text-left">
+                        <h4 className="font-bold text-gray-800 uppercase">{vs.vtr}</h4>
+                        <p className="text-[10px] text-gray-400 font-black uppercase tracking-tight">{vs.items.length} ITENS DISTINTOS</p>
+                      </div>
+                    </div>
+                    <ChevronRight className="text-gray-300 group-hover:text-blue-500 group-hover:translate-x-1 transition-all" />
+                  </button>
+                ))
+              )}
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden animate-in slide-in-from-right-4">
+              <div className="p-6 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <button onClick={() => setSelectedVtr(null)} className="p-2 hover:bg-white rounded-lg text-gray-400 hover:text-blue-600 transition-all"><Minus size={20} className="rotate-90" /></button>
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-800 uppercase">Estoque: {selectedVtr}</h3>
+                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Saldo Atual na Viatura</p>
+                  </div>
+                </div>
+              </div>
+              <div className="overflow-x-auto max-h-[50vh] overflow-y-auto custom-scrollbar">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-gray-50/50 text-gray-400 font-bold uppercase text-[10px] tracking-widest sticky top-0 z-10 backdrop-blur-sm">
+                    <tr><th className="px-6 py-4">Código</th><th className="px-6 py-4">Material</th><th className="px-6 py-4">Quantidade</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {vtrStocks.find(v => v.vtr === selectedVtr)?.items.filter(i => i.quantity > 0).map(item => {
+                      const mat = materials.find(m => m.id === item.materialId);
+                      return (
+                        <tr key={item.materialId} className="hover:bg-blue-50/10 transition-colors">
+                          <td className="px-6 py-4 font-mono text-[10px] text-gray-400 uppercase">{mat?.code || item.materialId}</td>
+                          <td className="px-6 py-4 font-bold text-gray-700">{mat?.name || 'Material Desconhecido'}</td>
+                          <td className="px-6 py-4"><span className="inline-flex items-center justify-center min-w-[32px] px-2.5 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-black">x{item.quantity}</span></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       {/* History Tab */}
       {activeTab === 'history' && (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
