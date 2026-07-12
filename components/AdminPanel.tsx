@@ -1,9 +1,9 @@
 
 import React, { useState, useMemo } from 'react';
 import { Material, MaterialRequest, StockMovement, VtrStock } from '../types';
-import { Search, Plus, Minus, CheckCircle, XCircle, Download, Database, ClipboardList, Loader2, History, ArrowUpRight, ArrowDownLeft, AlertCircle, LayoutDashboard, Truck, ChevronRight } from 'lucide-react';
+import { Search, Plus, Minus, CheckCircle, XCircle, Download, Database, ClipboardList, Loader2, History, ArrowUpRight, ArrowDownLeft, AlertCircle, LayoutDashboard, Truck, ChevronRight, TrendingUp, Filter, Calendar, RotateCcw } from 'lucide-react';
 import { exportToExcel, syncToGoogleSheets } from '../services/dataService';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, AreaChart, Area } from 'recharts';
 
 interface AdminPanelProps {
   materials: Material[];
@@ -19,6 +19,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
   const [selectedVtr, setSelectedVtr] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [isBusy, setIsBusy] = useState(false);
+
+  // Filtros de Solicitações
+  const [filterStatus, setFilterStatus] = useState<'Todos' | 'Pendente' | 'Atendido' | 'Cancelado'>('Todos');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
 
   const stats = useMemo(() => {
     const thirtyDaysAgo = new Date();
@@ -37,6 +42,30 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
       .sort(([, a], [, b]) => b - a)[0];
 
     return { totalItems, totalRequests, topRequester: topRequester?.[0] || '---' };
+  }, [requests]);
+
+  const trendData = useMemo(() => {
+    const data = [];
+    const now = new Date();
+    
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const monthLabel = d.toLocaleString('pt-BR', { month: 'short' }).toUpperCase();
+      const year = d.getFullYear();
+      
+      const monthTotal = requests
+        .filter(req => {
+          const reqDate = new Date(req.timestamp);
+          return reqDate.getMonth() === d.getMonth() && reqDate.getFullYear() === year && req.status !== 'Cancelado';
+        })
+        .reduce((sum, req) => sum + req.items.reduce((iSum, i) => iSum + i.quantity, 0), 0);
+        
+      data.push({
+        month: monthLabel,
+        total: monthTotal
+      });
+    }
+    return data;
   }, [requests]);
 
   const chartData = useMemo(() => {
@@ -94,6 +123,29 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
       })
     );
   }, [vtrStocks, searchTerm, materials]);
+
+  const filteredRequests = useMemo(() => {
+    return requests.filter(r => {
+      const matchesSearch = r.vtr.toLowerCase().includes(searchTerm.toLowerCase()) || 
+        r.items.some(i => {
+          const mat = materials.find(m => m.id === i.materialId);
+          return mat?.name.toLowerCase().includes(searchTerm.toLowerCase());
+        });
+      
+      const matchesStatus = filterStatus === 'Todos' || r.status === filterStatus;
+      
+      const reqDate = new Date(r.timestamp);
+      reqDate.setHours(0,0,0,0);
+      
+      const start = startDate ? new Date(startDate + 'T00:00:00') : null;
+      const end = endDate ? new Date(endDate + 'T23:59:59') : null;
+      
+      const matchesStartDate = !start ? true : new Date(r.timestamp) >= start;
+      const matchesEndDate = !end ? true : new Date(r.timestamp) <= end;
+      
+      return matchesSearch && matchesStatus && matchesStartDate && matchesEndDate;
+    }).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }, [requests, searchTerm, materials, filterStatus, startDate, endDate]);
 
   const handleExportStock = () => exportToExcel(materials, 'estoque_lv_leste');
   
@@ -200,47 +252,97 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-            <div className="flex items-center gap-3 mb-8">
-              <div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><LayoutDashboard size={24} /></div>
-              <div>
-                <h3 className="text-lg font-bold text-gray-800">Materiais mais Requisitados</h3>
-                <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">Últimos 30 dias</p>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+              <div className="flex items-center gap-3 mb-8">
+                <div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><LayoutDashboard size={24} /></div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-800">Materiais mais Requisitados</h3>
+                  <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">Últimos 30 dias</p>
+                </div>
+              </div>
+              
+              <div className="h-[400px] w-full">
+                {chartData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 60, left: 20, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
+                      <XAxis type="number" hide />
+                      <YAxis 
+                        dataKey="name" 
+                        type="category" 
+                        width={180} 
+                        tick={{ fontSize: 11, fontWeight: 700, fill: '#475569' }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <Tooltip 
+                        cursor={{ fill: '#f8fafc' }}
+                        contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '12px', fontWeight: 'bold' }}
+                        formatter={(value: any, name: any, props: any) => [value, props.payload.fullName]}
+                      />
+                      <Bar dataKey="total" radius={[0, 6, 6, 0]} barSize={24} label={{ position: 'right', fill: '#64748b', fontSize: 12, fontWeight: 800, offset: 10 }}>
+                        {chartData.map((_, index) => (
+                          <Cell key={`cell-${index}`} fill={index === 0 ? '#2563eb' : '#3b82f6'} fillOpacity={1 - (index * 0.1)} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center text-gray-300">
+                    <AlertCircle size={48} className="mb-2 opacity-20" />
+                    <p className="text-sm font-bold uppercase tracking-widest opacity-50">Sem dados suficientes</p>
+                  </div>
+                )}
               </div>
             </div>
-            
-            <div className="h-[450px] w-full">
-              {chartData.length > 0 ? (
+
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+              <div className="flex items-center gap-3 mb-8">
+                <div className="p-3 bg-green-50 text-green-600 rounded-xl"><TrendingUp size={24} /></div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-800">Tendência de Consumo</h3>
+                  <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">Últimos 6 Meses (unidades)</p>
+                </div>
+              </div>
+              
+              <div className="h-[400px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 60, left: 20, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
-                    <XAxis type="number" hide />
+                  <AreaChart data={trendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#22c55e" stopOpacity={0.1}/>
+                        <stop offset="95%" stopColor="#22c55e" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis 
+                      dataKey="month" 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }} 
+                      dy={10}
+                    />
                     <YAxis 
-                      dataKey="name" 
-                      type="category" 
-                      width={180} 
-                      tick={{ fontSize: 11, fontWeight: 700, fill: '#475569' }}
-                      axisLine={false}
-                      tickLine={false}
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
                     />
                     <Tooltip 
-                      cursor={{ fill: '#f8fafc' }}
                       contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '12px', fontWeight: 'bold' }}
-                      formatter={(value: any, name: any, props: any) => [value, props.payload.fullName]}
                     />
-                    <Bar dataKey="total" radius={[0, 6, 6, 0]} barSize={24} label={{ position: 'right', fill: '#64748b', fontSize: 12, fontWeight: 800, offset: 10 }}>
-                      {chartData.map((_, index) => (
-                        <Cell key={`cell-${index}`} fill={index === 0 ? '#2563eb' : '#3b82f6'} fillOpacity={1 - (index * 0.1)} />
-                      ))}
-                    </Bar>
-                  </BarChart>
+                    <Area 
+                      type="monotone" 
+                      dataKey="total" 
+                      stroke="#22c55e" 
+                      strokeWidth={3}
+                      fillOpacity={1} 
+                      fill="url(#colorTotal)" 
+                      animationDuration={1500}
+                    />
+                  </AreaChart>
                 </ResponsiveContainer>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center text-gray-300">
-                  <AlertCircle size={48} className="mb-2 opacity-20" />
-                  <p className="text-sm font-bold uppercase tracking-widest opacity-50">Sem dados suficientes</p>
-                </div>
-              )}
+              </div>
             </div>
           </div>
         </div>
@@ -298,13 +400,62 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
       {/* Requests Tab */}
       {activeTab === 'requests' && (
         <div className="space-y-4">
-          {requests.length === 0 ? (
+          {/* Filter Bar */}
+          <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-4 items-end">
+            <div className="flex-1 w-full space-y-1.5">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5 ml-1">
+                <Filter size={12} /> Status
+              </label>
+              <div className="flex p-1 bg-gray-50 rounded-xl border border-gray-100 overflow-x-auto no-scrollbar">
+                {(['Todos', 'Pendente', 'Atendido', 'Cancelado'] as const).map(status => (
+                  <button
+                    key={status}
+                    onClick={() => setFilterStatus(status)}
+                    className={`flex-1 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all whitespace-nowrap ${filterStatus === status ? 'bg-white shadow-sm text-blue-700' : 'text-gray-400 hover:text-gray-600'}`}
+                  >
+                    {status}
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            <div className="w-full md:w-auto space-y-1.5">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5 ml-1">
+                <Calendar size={12} /> Período
+              </label>
+              <div className="flex items-center gap-2">
+                <input 
+                  type="date" 
+                  value={startDate} 
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="bg-gray-50 border border-gray-100 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+                <span className="text-gray-300 font-bold">à</span>
+                <input 
+                  type="date" 
+                  value={endDate} 
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="bg-gray-50 border border-gray-100 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </div>
+            </div>
+
+            <button 
+              onClick={() => { setFilterStatus('Todos'); setStartDate(''); setEndDate(''); setSearchTerm(''); }}
+              className="p-2.5 bg-gray-50 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl border border-gray-100 transition-all active:scale-95"
+              title="Limpar Filtros"
+            >
+              <RotateCcw size={18} />
+            </button>
+          </div>
+
+          {filteredRequests.length === 0 ? (
             <div className="bg-white p-16 text-center rounded-2xl border-2 border-dashed border-gray-200">
               <ClipboardList className="mx-auto text-gray-200 mb-4" size={56} />
-              <p className="text-gray-400 font-black uppercase text-xs tracking-widest">Nenhum pedido registrado</p>
+              <p className="text-gray-400 font-black uppercase text-xs tracking-widest">Nenhum pedido encontrado</p>
             </div>
           ) : (
-            requests.slice().reverse().map(req => (
+            filteredRequests.map(req => (
               <div key={req.id} className={`bg-white p-6 rounded-2xl shadow-sm border-2 transition-all animate-in slide-in-from-bottom-2 ${req.status === 'Pendente' ? 'border-blue-100 bg-blue-50/10' : 'border-gray-100'}`}>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
                   <div className="flex items-start gap-4">
