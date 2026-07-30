@@ -68,7 +68,7 @@ const App: React.FC = () => {
     setTimeout(() => {
       pendingSyncRef.current = false;
       loadGlobalData(false);
-    }, 5000);
+    }, 15000); // Aumentado para 15s para garantir que o Apps Script processou a escrita
   };
 
   const handleUpdateStock = (id: string, newStock: number) => {
@@ -95,7 +95,7 @@ const App: React.FC = () => {
     setMovements(updatedMovs);
     saveMaterials(updatedMats);
     saveMovements(updatedMovs);
-    triggerSync(updatedMats, requests, updatedMovs, vtrStocks);
+    triggerSync(updatedMats, requests, updatedMovs, [...vtrStocks]);
   };
 
   const handleAddRequest = async (vtr: string, items: RequestedItem[]) => {
@@ -134,7 +134,7 @@ const App: React.FC = () => {
     saveRequests(updatedRequests);
     saveMovements(updatedMovs);
     
-    await triggerSync(updatedMaterials, updatedRequests, updatedMovs, vtrStocks);
+    triggerSync(updatedMaterials, updatedRequests, updatedMovs, [...vtrStocks]);
     alert(`Solicitação para ${vtr} enviada com sucesso! Aguarde a confirmação do administrativo.`);
   };
 
@@ -142,8 +142,9 @@ const App: React.FC = () => {
     let currentMaterials = [...materials];
     let currentMovements = [...movements];
     let currentVtrStocks = [...vtrStocks];
+    let currentRequests = [...requests];
 
-    const updatedRequests = requests.map(req => {
+    const updatedRequests = currentRequests.map(req => {
       if (req.id === requestId) {
         if (status === 'Atendido' && req.status === 'Pendente') {
           // 1. Log de confirmação
@@ -156,13 +157,15 @@ const App: React.FC = () => {
             reason: `Atendimento Confirmado VTR ${req.vtr}`
           });
 
-          // 2. Incrementar estoque da VTR
+          // 2. Incrementar estoque da VTR (apenas itens não cancelados)
           const vtrIdx = currentVtrStocks.findIndex(vs => vs.vtr === req.vtr);
+          const activeItems = req.items.filter(i => !i.cancelled);
+          
           if (vtrIdx === -1) {
-            currentVtrStocks.push({ vtr: req.vtr, items: [...req.items] });
+            currentVtrStocks.push({ vtr: req.vtr, items: [...activeItems] });
           } else {
             const updatedItems = [...currentVtrStocks[vtrIdx].items];
-            req.items.forEach(item => {
+            activeItems.forEach(item => {
               const itemIdx = updatedItems.findIndex(i => i.materialId === item.materialId);
               if (itemIdx === -1) {
                 updatedItems.push({ ...item });
@@ -178,12 +181,12 @@ const App: React.FC = () => {
         }
         
         if (status === 'Cancelado' && req.status !== 'Cancelado') {
-          // Se estava atendido, remove do estoque da VTR
+          // Se estava atendido, remove do estoque da VTR (apenas itens não cancelados)
           if (req.status === 'Atendido') {
             const vtrIdx = currentVtrStocks.findIndex(vs => vs.vtr === req.vtr);
             if (vtrIdx !== -1) {
               const updatedItems = [...currentVtrStocks[vtrIdx].items];
-              req.items.forEach(item => {
+              req.items.filter(i => !i.cancelled).forEach(item => {
                 const itemIdx = updatedItems.findIndex(i => i.materialId === item.materialId);
                 if (itemIdx !== -1) {
                   updatedItems[itemIdx] = { 
@@ -196,8 +199,8 @@ const App: React.FC = () => {
             }
           }
 
-          // Devolver itens ao estoque principal
-          req.items.forEach(item => {
+          // Devolver itens ao estoque principal (apenas itens não cancelados)
+          req.items.filter(i => !i.cancelled).forEach(item => {
             const mIdx = currentMaterials.findIndex(m => m.id === item.materialId);
             if (mIdx !== -1) {
               currentMaterials[mIdx] = { ...currentMaterials[mIdx], stock: currentMaterials[mIdx].stock + item.quantity };
@@ -228,6 +231,130 @@ const App: React.FC = () => {
     saveVtrStocks(currentVtrStocks);
     
     triggerSync(currentMaterials, updatedRequests, currentMovements, currentVtrStocks);
+  };
+
+  const handleUpdateItemInRequest = (requestId: string, materialId: string, action: 'update' | 'cancel', newQuantity?: number) => {
+    let currentMaterials = [...materials];
+    let currentMovements = [...movements];
+    let currentVtrStocks = [...vtrStocks];
+    let currentRequests = [...requests];
+
+    const reqIdx = currentRequests.findIndex(r => r.id === requestId);
+    if (reqIdx === -1) return;
+
+    const request = { ...currentRequests[reqIdx] };
+    const items = [...request.items];
+    const itemIdx = items.findIndex(i => i.materialId === materialId);
+    if (itemIdx === -1) return;
+
+    const item = { ...items[itemIdx] };
+    const oldQuantity = item.quantity;
+
+    if (action === 'cancel') {
+      item.cancelled = !item.cancelled;
+      
+      if (item.cancelled) {
+        const mIdx = currentMaterials.findIndex(m => m.id === materialId);
+        if (mIdx !== -1) {
+          currentMaterials[mIdx] = { ...currentMaterials[mIdx], stock: currentMaterials[mIdx].stock + oldQuantity };
+          currentMovements.push({
+            id: `MOV-ITEM-CANCEL-${Date.now()}-${materialId}`,
+            materialId: materialId,
+            type: 'Entrada',
+            quantity: oldQuantity,
+            timestamp: new Date().toISOString(),
+            reason: `Item cancelado no Pedido ${request.vtr}`
+          });
+        }
+        
+        if (request.status === 'Atendido') {
+          const vtrIdx = currentVtrStocks.findIndex(vs => vs.vtr === request.vtr);
+          if (vtrIdx !== -1) {
+            const vItems = [...currentVtrStocks[vtrIdx].items];
+            const vItemIdx = vItems.findIndex(vi => vi.materialId === materialId);
+            if (vItemIdx !== -1) {
+              vItems[vItemIdx] = { ...vItems[vItemIdx], quantity: Math.max(0, vItems[vItemIdx].quantity - oldQuantity) };
+              currentVtrStocks[vtrIdx] = { ...currentVtrStocks[vtrIdx], items: vItems };
+            }
+          }
+        }
+      } else {
+        const mIdx = currentMaterials.findIndex(m => m.id === materialId);
+        if (mIdx !== -1) {
+          currentMaterials[mIdx] = { ...currentMaterials[mIdx], stock: Math.max(0, currentMaterials[mIdx].stock - oldQuantity) };
+          currentMovements.push({
+            id: `MOV-ITEM-REACTIVATE-${Date.now()}-${materialId}`,
+            materialId: materialId,
+            type: 'Saída',
+            quantity: oldQuantity,
+            timestamp: new Date().toISOString(),
+            reason: `Item reativado no Pedido ${request.vtr}`
+          });
+        }
+
+        if (request.status === 'Atendido') {
+           const vtrIdx = currentVtrStocks.findIndex(vs => vs.vtr === request.vtr);
+           if (vtrIdx !== -1) {
+             const vItems = [...currentVtrStocks[vtrIdx].items];
+             const vItemIdx = vItems.findIndex(vi => vi.materialId === materialId);
+             if (vItemIdx === -1) {
+               vItems.push({ materialId, quantity: oldQuantity });
+             } else {
+               vItems[vItemIdx] = { ...vItems[vItemIdx], quantity: vItems[vItemIdx].quantity + oldQuantity };
+             }
+             currentVtrStocks[vtrIdx] = { ...currentVtrStocks[vtrIdx], items: vItems };
+           }
+        }
+      }
+    } else if (action === 'update' && typeof newQuantity === 'number') {
+      if (item.cancelled) return; 
+
+      const diff = newQuantity - oldQuantity;
+      if (diff === 0) return;
+
+      item.quantity = newQuantity;
+
+      const mIdx = currentMaterials.findIndex(m => m.id === materialId);
+      if (mIdx !== -1) {
+        currentMaterials[mIdx] = { ...currentMaterials[mIdx], stock: Math.max(0, currentMaterials[mIdx].stock - diff) };
+        currentMovements.push({
+          id: `MOV-ITEM-UPDATE-${Date.now()}-${materialId}`,
+          materialId: materialId,
+          type: diff > 0 ? 'Saída' : 'Entrada',
+          quantity: Math.abs(diff),
+          timestamp: new Date().toISOString(),
+          reason: `Alteração qtd item no Pedido ${request.vtr}`
+        });
+      }
+
+      if (request.status === 'Atendido') {
+         const vtrIdx = currentVtrStocks.findIndex(vs => vs.vtr === request.vtr);
+         if (vtrIdx !== -1) {
+           const vItems = [...currentVtrStocks[vtrIdx].items];
+           const vItemIdx = vItems.findIndex(vi => vi.materialId === materialId);
+           if (vItemIdx !== -1) {
+             vItems[vItemIdx] = { ...vItems[vItemIdx], quantity: Math.max(0, vItems[vItemIdx].quantity + diff) };
+             currentVtrStocks[vtrIdx] = { ...currentVtrStocks[vtrIdx], items: vItems };
+           }
+         }
+      }
+    }
+
+    items[itemIdx] = item;
+    request.items = items;
+    currentRequests[reqIdx] = request;
+
+    setMaterials(currentMaterials);
+    setRequests(currentRequests);
+    setMovements(currentMovements);
+    setVtrStocks(currentVtrStocks);
+    
+    saveMaterials(currentMaterials);
+    saveRequests(currentRequests);
+    saveMovements(currentMovements);
+    saveVtrStocks(currentVtrStocks);
+    
+    triggerSync(currentMaterials, currentRequests, currentMovements, currentVtrStocks);
   };
 
   const handleAdminAuth = (e: React.FormEvent) => {
@@ -323,6 +450,7 @@ const App: React.FC = () => {
               vtrStocks={vtrStocks}
               onUpdateStock={handleUpdateStock}
               onUpdateRequestStatus={handleUpdateRequestStatus}
+              onUpdateItemInRequest={handleUpdateItemInRequest}
             />
           </div>
         )

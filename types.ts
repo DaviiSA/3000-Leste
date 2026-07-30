@@ -9,6 +9,7 @@ export interface Material {
 export interface RequestedItem {
   materialId: string;
   quantity: number;
+  cancelled?: boolean;
 }
 
 export interface MaterialRequest {

@@ -1,7 +1,7 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Material, MaterialRequest, StockMovement, VtrStock } from '../types';
-import { Search, Plus, Minus, CheckCircle, XCircle, Download, Database, ClipboardList, Loader2, History, ArrowUpRight, ArrowDownLeft, AlertCircle, LayoutDashboard, Truck, ChevronRight, TrendingUp, Filter, Calendar, RotateCcw } from 'lucide-react';
+import { Search, Plus, Minus, CheckCircle, XCircle, Download, Database, ClipboardList, Loader2, History, ArrowUpRight, ArrowDownLeft, AlertCircle, LayoutDashboard, Truck, ChevronRight, TrendingUp, Filter, Calendar, RotateCcw, Bell, X } from 'lucide-react';
 import { exportToExcel, syncToGoogleSheets } from '../services/dataService';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, AreaChart, Area } from 'recharts';
 
@@ -12,13 +12,20 @@ interface AdminPanelProps {
   vtrStocks: VtrStock[];
   onUpdateStock: (id: string, newStock: number) => void;
   onUpdateRequestStatus: (requestId: string, status: 'Atendido' | 'Cancelado') => void;
+  onUpdateItemInRequest: (requestId: string, materialId: string, action: 'update' | 'cancel', newQuantity?: number) => void;
 }
 
-const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements, vtrStocks, onUpdateStock, onUpdateRequestStatus }) => {
+const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements, vtrStocks, onUpdateStock, onUpdateRequestStatus, onUpdateItemInRequest }) => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'stock' | 'requests' | 'history' | 'vtr_stock'>('dashboard');
   const [selectedVtr, setSelectedVtr] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [isBusy, setIsBusy] = useState(false);
+  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  const showNotification = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 3000);
+  };
 
   // Filtros de Solicitações
   const [filterStatus, setFilterStatus] = useState<'Todos' | 'Pendente' | 'Atendido' | 'Cancelado'>('Todos');
@@ -41,7 +48,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
     const topRequester = Object.entries(requesterCounts)
       .sort(([, a], [, b]) => b - a)[0];
 
-    return { totalItems, totalRequests, topRequester: topRequester?.[0] || '---' };
+    const pendingRequests = requests.filter(req => req.status === 'Pendente').length;
+
+    return { totalItems, totalRequests, topRequester: topRequester?.[0] || '---', pendingRequests };
   }, [requests]);
 
   const trendData = useMemo(() => {
@@ -147,9 +156,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
     }).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   }, [requests, searchTerm, materials, filterStatus, startDate, endDate]);
 
-  const handleExportStock = () => exportToExcel(materials, 'estoque_lv_leste');
+  const handleExportStock = () => {
+    showNotification('Iniciando exportação de estoque...');
+    exportToExcel(materials, 'estoque_lv_leste');
+  };
   
   const handleExportRequests = () => {
+    showNotification('Iniciando exportação de pedidos...');
     const flatten = requests.map(r => ({
       ID: r.id,
       Data: new Date(r.timestamp).toLocaleString(),
@@ -164,6 +177,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
   };
 
   const handleExportHistory = () => {
+    showNotification('Iniciando exportação de histórico...');
     const flatten = movements.map(m => {
       const mat = materials.find(mat => mat.id === m.materialId);
       return {
@@ -180,6 +194,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
   };
 
   const handleExportVtrStock = () => {
+    showNotification('Iniciando exportação de estoque VTR...');
     const flatten: any[] = [];
     vtrStocks.forEach(vs => {
       vs.items.forEach(item => {
@@ -197,9 +212,18 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
 
   const handleSync = async () => {
     setIsBusy(true);
-    const success = await syncToGoogleSheets({ materials, requests, movements, vtrStocks });
-    setIsBusy(false);
-    if (success) alert('Dados sincronizados com a planilha Google!');
+    try {
+      const success = await syncToGoogleSheets({ materials, requests, movements, vtrStocks });
+      setIsBusy(false);
+      if (success) {
+        showNotification('Dados sincronizados com sucesso!', 'success');
+      } else {
+        showNotification('Falha na sincronização.', 'error');
+      }
+    } catch (error) {
+      setIsBusy(false);
+      showNotification('Erro ao conectar com o serviço.', 'error');
+    }
   };
 
   return (
@@ -228,7 +252,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
       {activeTab === 'dashboard' && (
         <div className="space-y-6">
           {/* KPI Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
               <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Itens Requisitados</p>
               <div className="flex items-end gap-2">
@@ -243,11 +267,19 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
                 <span className="text-[10px] text-blue-600 font-bold mb-1">FINALIZADOS</span>
               </div>
             </div>
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 relative overflow-hidden">
+              <div className={`absolute top-0 right-0 w-1.5 h-full ${stats.pendingRequests > 0 ? 'bg-orange-500' : 'bg-gray-100'}`}></div>
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Solicitações Pendentes</p>
+              <div className="flex items-end gap-2">
+                <span className={`text-2xl font-bold ${stats.pendingRequests > 0 ? 'text-orange-600' : 'text-gray-800'}`}>{stats.pendingRequests}</span>
+                <span className="text-[10px] text-orange-600 font-bold mb-1">AGUARDANDO</span>
+              </div>
+            </div>
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
               <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Maior Solicitante</p>
               <div className="flex items-end gap-2">
                 <span className="text-2xl font-bold text-gray-800 truncate max-w-[150px]">{stats.topRequester}</span>
-                <span className="text-[10px] text-orange-600 font-bold mb-1">TOP</span>
+                <span className="text-[10px] text-purple-600 font-bold mb-1">TOP</span>
               </div>
             </div>
           </div>
@@ -385,7 +417,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
                           min="0"
                           className="w-20 px-2 py-1 bg-gray-50 border border-gray-200 rounded-lg text-center font-bold text-gray-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                           value={item.stock}
-                          onChange={(e) => onUpdateStock(item.id, parseInt(e.target.value) || 0)}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value) || 0;
+                            onUpdateStock(item.id, val);
+                            showNotification(`Saldo atualizado: ${item.name}`, 'info');
+                          }}
                         />
                       </div>
                     </td>
@@ -478,14 +514,20 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
                       <div className="flex gap-2">
                         <button 
                           title="Confirmar Atendimento"
-                          onClick={() => onUpdateRequestStatus(req.id, 'Atendido')} 
+                          onClick={() => {
+                            onUpdateRequestStatus(req.id, 'Atendido');
+                            showNotification(`Pedido ${req.id.slice(-5)} atendido!`);
+                          }} 
                           className="flex items-center gap-1.5 px-3 py-2 bg-green-500 text-white rounded-xl shadow-lg shadow-green-100 hover:bg-green-600 transition-all active:scale-95 text-[10px] font-bold uppercase"
                         >
                           <CheckCircle size={14} /> Atender
                         </button>
                         <button 
                           title="Cancelar e Devolver Saldo"
-                          onClick={() => onUpdateRequestStatus(req.id, 'Cancelado')} 
+                          onClick={() => {
+                            onUpdateRequestStatus(req.id, 'Cancelado');
+                            showNotification(`Pedido ${req.id.slice(-5)} cancelado.`, 'error');
+                          }} 
                           className="flex items-center gap-1.5 px-3 py-2 bg-red-500 text-white rounded-xl shadow-lg shadow-red-100 hover:bg-red-600 transition-all active:scale-95 text-[10px] font-bold uppercase"
                         >
                           <XCircle size={14} /> Cancelar
@@ -499,6 +541,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
                         onClick={() => {
                           if(confirm("Deseja realmente cancelar este atendimento e devolver os itens ao estoque?")) {
                             onUpdateRequestStatus(req.id, 'Cancelado');
+                            showNotification(`Atendimento ${req.id.slice(-5)} estornado.`, 'info');
                           }
                         }} 
                         className="p-2 text-gray-300 hover:text-red-500 transition-colors"
@@ -520,11 +563,55 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
                   {req.items.map((item, idx) => {
                     const material = materials.find(m => m.id === item.materialId);
                     return (
-                      <div key={idx} className="flex justify-between items-center text-xs">
-                        <span className="text-gray-700 font-bold line-clamp-1 flex-1 mr-4">{material?.name || `Item ${item.materialId}`}</span>
+                      <div key={idx} className={`flex justify-between items-center text-xs ${item.cancelled ? 'opacity-40' : ''}`}>
+                        <div className="flex items-center gap-3 flex-1">
+                          <span className={`text-gray-700 font-bold line-clamp-1 ${item.cancelled ? 'line-through' : ''}`}>
+                            {material?.name || `Item ${item.materialId}`}
+                          </span>
+                          {item.cancelled && <span className="text-[8px] bg-gray-200 text-gray-500 px-1 rounded font-black uppercase">Cancelado</span>}
+                        </div>
                         <div className="flex items-center gap-3">
                            <span className="text-[9px] text-gray-400 font-mono">{material?.code || item.materialId}</span>
-                           <span className="bg-white px-2.5 py-1 rounded-lg border border-gray-200 font-black text-gray-900 shadow-sm">x{item.quantity}</span>
+                           
+                           {!item.cancelled && req.status !== 'Cancelado' ? (
+                             <div className="flex items-center bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+                               <button 
+                                onClick={() => {
+                                  const newQty = Math.max(1, item.quantity - 1);
+                                  onUpdateItemInRequest(req.id, item.materialId, 'update', newQty);
+                                  showNotification(`Qtd reduzida: ${material?.name}`, 'info');
+                                }}
+                                className="px-1.5 py-1 hover:bg-gray-50 text-gray-400 transition-colors"
+                               >
+                                 <Minus size={10} />
+                               </button>
+                               <span className="px-2 font-black text-gray-900 text-[10px]">x{item.quantity}</span>
+                               <button 
+                                onClick={() => {
+                                  onUpdateItemInRequest(req.id, item.materialId, 'update', item.quantity + 1);
+                                  showNotification(`Qtd aumentada: ${material?.name}`, 'info');
+                                }}
+                                className="px-1.5 py-1 hover:bg-gray-50 text-gray-400 transition-colors"
+                               >
+                                 <Plus size={10} />
+                               </button>
+                             </div>
+                           ) : (
+                             <span className="bg-white px-2.5 py-1 rounded-lg border border-gray-200 font-black text-gray-900 shadow-sm">x{item.quantity}</span>
+                           )}
+
+                           {req.status !== 'Cancelado' && (
+                             <button 
+                              onClick={() => {
+                                onUpdateItemInRequest(req.id, item.materialId, 'cancel');
+                                showNotification(item.cancelled ? `Item reativado: ${material?.name}` : `Item cancelado: ${material?.name}`, item.cancelled ? 'success' : 'error');
+                              }}
+                              className={`p-1.5 rounded-lg transition-all ${item.cancelled ? 'text-blue-500 hover:bg-blue-50' : 'text-gray-300 hover:text-red-500 hover:bg-red-50'}`}
+                              title={item.cancelled ? "Reativar Item" : "Cancelar Item"}
+                             >
+                               {item.cancelled ? <RotateCcw size={14} /> : <X size={14} />}
+                             </button>
+                           )}
                         </div>
                       </div>
                     );
@@ -657,6 +744,26 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* Notification Toast */}
+      {notification && (
+        <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-6 py-4 rounded-2xl shadow-2xl border animate-in slide-in-from-right-8 duration-300 ${
+          notification.type === 'success' ? 'bg-green-600 border-green-500 text-white' : 
+          notification.type === 'error' ? 'bg-red-600 border-red-500 text-white' : 
+          'bg-blue-600 border-blue-500 text-white'
+        }`}>
+          <div className="p-2 bg-white/20 rounded-xl">
+            {notification.type === 'success' ? <CheckCircle size={20} /> : notification.type === 'error' ? <AlertCircle size={20} /> : <Bell size={20} />}
+          </div>
+          <div className="flex-1">
+            <p className="text-[10px] font-black uppercase tracking-widest opacity-70 leading-none mb-1">{notification.type}</p>
+            <p className="text-sm font-bold leading-tight">{notification.message}</p>
+          </div>
+          <button onClick={() => setNotification(null)} className="p-1 hover:bg-white/10 rounded-lg transition-colors">
+            <X size={16} />
+          </button>
         </div>
       )}
     </div>
