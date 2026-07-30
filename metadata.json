@@ -2,5 +2,5 @@
   "name": "3000 Leste",
   "description": "Aplicativo para controle de estoque e solicitação de materiais para equipes da Energisa Linha Viva Leste.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

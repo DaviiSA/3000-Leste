@@ -377,10 +377,15 @@ const App: React.FC = () => {
   }
 
   return (
-    <Layout currentView={view} onNavigate={(v) => {
-      setView(v);
-      if (v !== 'Admin') setIsAdminAuthenticated(false);
-    }}>
+    <Layout 
+      currentView={view} 
+      onNavigate={(v) => {
+        setView(v);
+        if (v !== 'Admin') setIsAdminAuthenticated(false);
+      }}
+      fullWidth={view === 'Admin' && isAdminAuthenticated}
+      hideHeaderFooter={view === 'Admin' && isAdminAuthenticated}
+    >
       {view === 'Home' && (
         <div className="flex flex-col gap-8 items-center justify-center min-h-[60vh] animate-in fade-in zoom-in">
           <div className="text-center space-y-2">
@@ -435,24 +440,19 @@ const App: React.FC = () => {
             </div>
           </div>
         ) : (
-          <div className="space-y-6">
-            <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between px-6">
-               <div className="flex items-center gap-2 text-blue-600 font-bold text-[10px] uppercase tracking-wider">
-                  {isSyncing ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />}
-                  {isSyncing ? 'Sincronizando...' : 'Nuvem Conectada'}
-               </div>
-               <div className="text-[10px] text-gray-400 font-bold uppercase">Última leitura: {lastUpdate}</div>
-            </div>
-            <AdminPanel 
-              materials={materials} 
-              requests={requests} 
-              movements={movements}
-              vtrStocks={vtrStocks}
-              onUpdateStock={handleUpdateStock}
-              onUpdateRequestStatus={handleUpdateRequestStatus}
-              onUpdateItemInRequest={handleUpdateItemInRequest}
-            />
-          </div>
+          <AdminPanel 
+            materials={materials} 
+            requests={requests} 
+            movements={movements}
+            vtrStocks={vtrStocks}
+            onUpdateStock={handleUpdateStock}
+            onUpdateRequestStatus={handleUpdateRequestStatus}
+            onUpdateItemInRequest={handleUpdateItemInRequest}
+            onLogout={() => {
+              setIsAdminAuthenticated(false);
+              setView('Home');
+            }}
+          />
         )
       )}
 

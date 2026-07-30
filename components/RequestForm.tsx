@@ -229,12 +229,12 @@ const RequestForm: React.FC<RequestFormProps> = ({ materials, onSubmit, mode = '
               {cart.map(item => {
                 const material = materials.find(m => m.id === item.materialId);
                 return (
-                  <div key={item.materialId} className="flex items-center justify-between bg-gray-50 p-4 rounded-xl border border-gray-100">
+                  <div key={item.materialId} className="flex flex-col sm:flex-row sm:items-center justify-between bg-gray-50 p-4 rounded-xl border border-gray-100 gap-4">
                     <div className="flex-1">
                       <p className="text-sm font-bold text-gray-800">{material?.name}</p>
                       <p className="text-xs text-gray-500">Saldo Livre: {material?.availableStock}</p>
                     </div>
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center justify-between sm:justify-end gap-4">
                       <div className="flex items-center bg-white rounded-lg border border-gray-200 p-1">
                         <button 
                           onClick={() => updateQuantity(item.materialId, -1)}
