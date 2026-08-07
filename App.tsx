@@ -57,28 +57,40 @@ const App: React.FC = () => {
 
   useEffect(() => {
     loadGlobalData(true);
-    const interval = setInterval(() => loadGlobalData(false), 90000);
+    const interval = setInterval(() => loadGlobalData(false), 30000);
     return () => clearInterval(interval);
   }, [loadGlobalData]);
 
   const triggerSync = async (mats: Material[], reqs: MaterialRequest[], movs: StockMovement[], vStocks: VtrStock[]) => {
     setIsSyncing(true);
     pendingSyncRef.current = true;
-    await syncToGoogleSheets({ materials: mats, requests: reqs, movements: movs, vtrStocks: vStocks });
+    const success = await syncToGoogleSheets({ materials: mats, requests: reqs, movements: movs, vtrStocks: vStocks });
+    
+    // Agendar um recarregamento para garantir consistência após o Apps Script processar
     setTimeout(() => {
       pendingSyncRef.current = false;
       loadGlobalData(false);
-    }, 15000); // Aumentado para 15s para garantir que o Apps Script processou a escrita
+    }, success ? 10000 : 2000);
   };
 
-  const handleUpdateStock = (id: string, newStock: number) => {
-    const material = materials.find(m => m.id === id);
-    if (!material) return;
+  const handleUpdateStock = async (id: string, newStock: number) => {
+    setIsSyncing(true);
+    const remote = await fetchRemoteData();
+    const currentMaterials = remote?.materials || [...materials];
+    const currentMovements = remote?.movements || [...movements];
+
+    const material = currentMaterials.find(m => m.id === id);
+    if (!material) {
+      setIsSyncing(false);
+      return;
+    }
 
     const diff = newStock - material.stock;
-    if (diff === 0) return;
+    if (diff === 0) {
+      setIsSyncing(false);
+      return;
+    }
 
-    // Gerar log de movimentação
     const newMovement: StockMovement = {
       id: `MOV-${Date.now()}-${id}`,
       materialId: id,
@@ -88,17 +100,32 @@ const App: React.FC = () => {
       reason: 'Ajuste Manual Administrativo'
     };
 
-    const updatedMats = materials.map(m => m.id === id ? { ...m, stock: Math.max(0, newStock) } : m);
-    const updatedMovs = [...movements, newMovement];
+    const updatedMats = currentMaterials.map(m => m.id === id ? { ...m, stock: Math.max(0, newStock) } : m);
+    const updatedMovs = [...currentMovements, newMovement];
+
+    const finalRequests = remote?.requests || [...requests];
+    const finalVtrStocks = remote?.vtrStocks || [...vtrStocks];
 
     setMaterials(updatedMats);
     setMovements(updatedMovs);
+    setRequests(finalRequests);
+    setVtrStocks(finalVtrStocks);
+    
     saveMaterials(updatedMats);
     saveMovements(updatedMovs);
-    triggerSync(updatedMats, requests, updatedMovs, [...vtrStocks]);
+    saveRequests(finalRequests);
+    saveVtrStocks(finalVtrStocks);
+
+    triggerSync(updatedMats, finalRequests, updatedMovs, finalVtrStocks);
   };
 
   const handleAddRequest = async (vtr: string, items: RequestedItem[]) => {
+    setIsSyncing(true);
+    const remote = await fetchRemoteData();
+    const currentMaterials = remote?.materials || [...materials];
+    const currentMovements = remote?.movements || [...movements];
+    const currentRequests = remote?.requests || [...requests];
+
     // 1. Gerar movimentações de saída (Reserva imediata de estoque)
     const newMovements: StockMovement[] = items.map(item => ({
       id: `MOV-${Date.now()}-${item.materialId}`,
@@ -110,7 +137,7 @@ const App: React.FC = () => {
     }));
 
     // 2. Abatimento local do estoque (Reserva)
-    const updatedMaterials = materials.map(m => {
+    const updatedMaterials = currentMaterials.map(m => {
       const r = items.find(i => i.materialId === m.id);
       return r ? { ...m, stock: Math.max(0, m.stock - r.quantity) } : m;
     });
@@ -124,25 +151,32 @@ const App: React.FC = () => {
       status: 'Pendente'
     };
     
-    const updatedRequests = [...requests, newRequest];
-    const updatedMovs = [...movements, ...newMovements];
+    const updatedRequests = [...currentRequests, newRequest];
+    const updatedMovs = [...currentMovements, ...newMovements];
+    const finalVtrStocks = remote?.vtrStocks || [...vtrStocks];
     
     setMaterials(updatedMaterials);
     setRequests(updatedRequests);
     setMovements(updatedMovs);
+    setVtrStocks(finalVtrStocks);
+
     saveMaterials(updatedMaterials);
     saveRequests(updatedRequests);
     saveMovements(updatedMovs);
+    saveVtrStocks(finalVtrStocks);
     
-    triggerSync(updatedMaterials, updatedRequests, updatedMovs, [...vtrStocks]);
+    await triggerSync(updatedMaterials, updatedRequests, updatedMovs, finalVtrStocks);
     alert(`Solicitação para ${vtr} enviada com sucesso! Aguarde a confirmação do administrativo.`);
   };
 
-  const handleUpdateRequestStatus = (requestId: string, status: 'Atendido' | 'Cancelado') => {
-    let currentMaterials = [...materials];
-    let currentMovements = [...movements];
-    let currentVtrStocks = [...vtrStocks];
-    let currentRequests = [...requests];
+  const handleUpdateRequestStatus = async (requestId: string, status: 'Atendido' | 'Cancelado') => {
+    setIsSyncing(true);
+    const remote = await fetchRemoteData();
+    
+    let currentMaterials = remote?.materials || [...materials];
+    let currentMovements = remote?.movements || [...movements];
+    let currentVtrStocks = remote?.vtrStocks || [...vtrStocks];
+    let currentRequests = remote?.requests || [...requests];
 
     const updatedRequests = currentRequests.map(req => {
       if (req.id === requestId) {
@@ -233,19 +267,28 @@ const App: React.FC = () => {
     triggerSync(currentMaterials, updatedRequests, currentMovements, currentVtrStocks);
   };
 
-  const handleUpdateItemInRequest = (requestId: string, materialId: string, action: 'update' | 'cancel', newQuantity?: number) => {
-    let currentMaterials = [...materials];
-    let currentMovements = [...movements];
-    let currentVtrStocks = [...vtrStocks];
-    let currentRequests = [...requests];
+  const handleUpdateItemInRequest = async (requestId: string, materialId: string, action: 'update' | 'cancel', newQuantity?: number) => {
+    setIsSyncing(true);
+    const remote = await fetchRemoteData();
+
+    let currentMaterials = remote?.materials || [...materials];
+    let currentMovements = remote?.movements || [...movements];
+    let currentVtrStocks = remote?.vtrStocks || [...vtrStocks];
+    let currentRequests = remote?.requests || [...requests];
 
     const reqIdx = currentRequests.findIndex(r => r.id === requestId);
-    if (reqIdx === -1) return;
+    if (reqIdx === -1) {
+      setIsSyncing(false);
+      return;
+    }
 
     const request = { ...currentRequests[reqIdx] };
     const items = [...request.items];
     const itemIdx = items.findIndex(i => i.materialId === materialId);
-    if (itemIdx === -1) return;
+    if (itemIdx === -1) {
+      setIsSyncing(false);
+      return;
+    }
 
     const item = { ...items[itemIdx] };
     const oldQuantity = item.quantity;
@@ -307,10 +350,16 @@ const App: React.FC = () => {
         }
       }
     } else if (action === 'update' && typeof newQuantity === 'number') {
-      if (item.cancelled) return; 
+      if (item.cancelled) {
+        setIsSyncing(false);
+        return; 
+      }
 
       const diff = newQuantity - oldQuantity;
-      if (diff === 0) return;
+      if (diff === 0) {
+        setIsSyncing(false);
+        return;
+      }
 
       item.quantity = newQuantity;
 
@@ -355,6 +404,57 @@ const App: React.FC = () => {
     saveVtrStocks(currentVtrStocks);
     
     triggerSync(currentMaterials, currentRequests, currentMovements, currentVtrStocks);
+  };
+
+  const handleUpdateVtrStock = async (vtr: string, materialId: string, delta: number) => {
+    setIsSyncing(true);
+    const remote = await fetchRemoteData();
+    
+    let currentVtrStocks = remote?.vtrStocks || [...vtrStocks];
+    const vtrIdx = currentVtrStocks.findIndex(vs => vs.vtr === vtr);
+    
+    if (vtrIdx === -1) {
+      if (delta > 0) {
+        currentVtrStocks.push({ vtr, items: [{ materialId, quantity: delta }] });
+      } else {
+        setIsSyncing(false);
+        return;
+      }
+    } else {
+      const updatedItems = [...currentVtrStocks[vtrIdx].items];
+      const itemIdx = updatedItems.findIndex(i => i.materialId === materialId);
+      
+      if (itemIdx === -1) {
+        if (delta > 0) {
+          updatedItems.push({ materialId, quantity: delta });
+        } else {
+          setIsSyncing(false);
+          return;
+        }
+      } else {
+        updatedItems[itemIdx] = { 
+          ...updatedItems[itemIdx], 
+          quantity: Math.max(0, updatedItems[itemIdx].quantity + delta) 
+        };
+      }
+      currentVtrStocks[vtrIdx] = { ...currentVtrStocks[vtrIdx], items: updatedItems };
+    }
+    
+    const finalMaterials = remote?.materials || [...materials];
+    const finalRequests = remote?.requests || [...requests];
+    const finalMovements = remote?.movements || [...movements];
+
+    setMaterials(finalMaterials);
+    setRequests(finalRequests);
+    setMovements(finalMovements);
+    setVtrStocks(currentVtrStocks);
+
+    saveMaterials(finalMaterials);
+    saveRequests(finalRequests);
+    saveMovements(finalMovements);
+    saveVtrStocks(currentVtrStocks);
+
+    triggerSync(finalMaterials, finalRequests, finalMovements, currentVtrStocks);
   };
 
   const handleAdminAuth = (e: React.FormEvent) => {
@@ -448,6 +548,7 @@ const App: React.FC = () => {
             onUpdateStock={handleUpdateStock}
             onUpdateRequestStatus={handleUpdateRequestStatus}
             onUpdateItemInRequest={handleUpdateItemInRequest}
+            onUpdateVtrStock={handleUpdateVtrStock}
             onLogout={() => {
               setIsAdminAuthenticated(false);
               setView('Home');

@@ -14,10 +14,11 @@ interface AdminPanelProps {
   onUpdateStock: (id: string, newStock: number) => void;
   onUpdateRequestStatus: (requestId: string, status: 'Atendido' | 'Cancelado') => void;
   onUpdateItemInRequest: (requestId: string, materialId: string, action: 'update' | 'cancel', newQuantity?: number) => void;
+  onUpdateVtrStock?: (vtr: string, materialId: string, delta: number) => void;
   onLogout?: () => void;
 }
 
-const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements, vtrStocks, onUpdateStock, onUpdateRequestStatus, onUpdateItemInRequest, onLogout }) => {
+const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements, vtrStocks, onUpdateStock, onUpdateRequestStatus, onUpdateItemInRequest, onUpdateVtrStock, onLogout }) => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'stock' | 'requests' | 'history' | 'vtr_stock'>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [selectedVtr, setSelectedVtr] = useState<string | null>(null);
@@ -930,22 +931,64 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-zinc-100">
-                          {vtrStocks.find(v => v.vtr === selectedVtr)?.items.filter(i => i.quantity > 0).map(item => {
+                          {vtrStocks.find(v => v.vtr === selectedVtr)?.items.filter(i => i.quantity >= 0).map(item => {
                             const mat = materials.find(m => m.id === item.materialId);
+                            if (!mat && item.quantity === 0) return null;
                             return (
                               <tr key={item.materialId} className="hover:bg-zinc-50/50 transition-colors">
                                 <td className="px-10 py-5 font-mono text-[10px] text-zinc-400 font-bold uppercase">{mat?.code || item.materialId}</td>
                                 <td className="px-10 py-5 font-bold text-zinc-900">{mat?.name || 'Material Desconhecido'}</td>
                                 <td className="px-10 py-5">
-                                  <span className="inline-flex items-center justify-center min-w-[48px] px-3.5 py-1.5 bg-blue-50 text-blue-700 rounded-xl text-xs font-black shadow-sm ring-1 ring-blue-100">
-                                    x{item.quantity}
-                                  </span>
+                                  <div className="flex items-center gap-3">
+                                    <button 
+                                      onClick={() => onUpdateVtrStock?.(selectedVtr!, item.materialId, -1)}
+                                      className="p-1.5 hover:bg-zinc-100 text-zinc-400 rounded-lg transition-colors border border-zinc-100"
+                                    >
+                                      <Minus size={14} />
+                                    </button>
+                                    <span className="inline-flex items-center justify-center min-w-[48px] px-3.5 py-1.5 bg-blue-50 text-blue-700 rounded-xl text-xs font-black shadow-sm ring-1 ring-blue-100">
+                                      x{item.quantity}
+                                    </span>
+                                    <button 
+                                      onClick={() => onUpdateVtrStock?.(selectedVtr!, item.materialId, 1)}
+                                      className="p-1.5 hover:bg-zinc-100 text-zinc-400 rounded-lg transition-colors border border-zinc-100"
+                                    >
+                                      <Plus size={14} />
+                                    </button>
+                                  </div>
                                 </td>
                               </tr>
                             );
                           })}
                         </tbody>
                       </table>
+                    </div>
+                    
+                    <div className="p-8 bg-zinc-50/30 border-t border-zinc-100">
+                      <div className="flex flex-col sm:flex-row items-center gap-4">
+                        <div className="relative flex-1 w-full">
+                          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                          <select 
+                            className="w-full pl-12 pr-4 py-3 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm font-bold appearance-none cursor-pointer"
+                            onChange={(e) => {
+                              if (e.target.value) {
+                                onUpdateVtrStock?.(selectedVtr!, e.target.value, 1);
+                                e.target.value = '';
+                              }
+                            }}
+                          >
+                            <option value="">Adicionar novo material...</option>
+                            {materials
+                              .filter(m => !vtrStocks.find(v => v.vtr === selectedVtr)?.items.some(i => i.materialId === m.id))
+                              .sort((a, b) => a.name.localeCompare(b.name))
+                              .map(m => (
+                                <option key={m.id} value={m.id}>{m.code} - {m.name}</option>
+                              ))
+                            }
+                          </select>
+                        </div>
+                        <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest hidden sm:block">Selecione para adicionar ao estoque</p>
+                      </div>
                     </div>
                   </div>
                 )}

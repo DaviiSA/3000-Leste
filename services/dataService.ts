@@ -94,7 +94,9 @@ export const fetchRemoteData = async (): Promise<{
 
     // 4. Estoque VTR
     if (data.vtrStocks && Array.isArray(data.vtrStocks)) {
-      result.vtrStocks = data.vtrStocks.map((vs: any) => {
+      const vtrMap = new Map<string, RequestedItem[]>();
+      data.vtrStocks.forEach((vs: any) => {
+        const vtr = String(vs.vtr);
         let items: RequestedItem[] = [];
         try {
           if (vs.items) {
@@ -102,13 +104,29 @@ export const fetchRemoteData = async (): Promise<{
             items = Array.isArray(itemsRaw) ? itemsRaw : [];
           }
         } catch (e) {
-          console.warn('Erro ao processar itens VTR:', vs.vtr);
+          console.warn('Erro ao processar itens VTR:', vtr);
         }
-        return {
-          vtr: String(vs.vtr),
-          items: items
-        };
+
+        if (vtrMap.has(vtr)) {
+          // Merge items for the same VTR if multiple rows exist
+          const existingItems = vtrMap.get(vtr)!;
+          items.forEach(newItem => {
+            const idx = existingItems.findIndex(ei => ei.materialId === newItem.materialId);
+            if (idx === -1) {
+              existingItems.push(newItem);
+            } else {
+              existingItems[idx].quantity += newItem.quantity;
+            }
+          });
+        } else {
+          vtrMap.set(vtr, items);
+        }
       });
+      
+      result.vtrStocks = Array.from(vtrMap.entries()).map(([vtr, items]) => ({
+        vtr,
+        items
+      }));
       localStorage.setItem(STORAGE_KEYS.VTR_STOCKS, JSON.stringify(result.vtrStocks));
     }
 
