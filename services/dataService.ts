@@ -93,41 +93,56 @@ export const fetchRemoteData = async (): Promise<{
     }
 
     // 4. Estoque VTR
-    if (data.vtrStocks && Array.isArray(data.vtrStocks)) {
+    const rawVtrData = data.vtrStocks || data.vtr_stocks || data.vtrStock || data.vtr_stock || data.estoqueVtr || data.estoque_vtr || data.vtr_estoque;
+    if (rawVtrData && Array.isArray(rawVtrData) && rawVtrData.length > 0) {
       const vtrMap = new Map<string, RequestedItem[]>();
-      data.vtrStocks.forEach((vs: any) => {
-        const vtr = String(vs.vtr);
+      rawVtrData.forEach((vs: any) => {
+        const vtr = String(vs.vtr || vs.VTR || vs.Vtr || '').trim();
+        if (!vtr) return;
+
         let items: RequestedItem[] = [];
         try {
           if (vs.items) {
             const itemsRaw = typeof vs.items === 'string' ? JSON.parse(vs.items) : vs.items;
             items = Array.isArray(itemsRaw) ? itemsRaw : [];
+          } else if (vs.details) {
+            const detailsRaw = typeof vs.details === 'string' ? JSON.parse(vs.details) : vs.details;
+            items = Array.isArray(detailsRaw) ? detailsRaw : [];
+          } else if (vs.materialId || vs.code || vs.material_id || vs.codigo) {
+            const matId = String(vs.materialId || vs.code || vs.material_id || vs.codigo || '').trim();
+            const qty = Number(vs.quantity || vs.qtd || vs.quantidade || 0);
+            if (matId) {
+              items = [{ materialId: matId, quantity: qty }];
+            }
           }
         } catch (e) {
           console.warn('Erro ao processar itens VTR:', vtr);
         }
 
         if (vtrMap.has(vtr)) {
-          // Merge items for the same VTR if multiple rows exist
           const existingItems = vtrMap.get(vtr)!;
           items.forEach(newItem => {
             const idx = existingItems.findIndex(ei => ei.materialId === newItem.materialId);
             if (idx === -1) {
-              existingItems.push(newItem);
+              existingItems.push({ materialId: newItem.materialId, quantity: newItem.quantity });
             } else {
               existingItems[idx].quantity += newItem.quantity;
             }
           });
         } else {
-          vtrMap.set(vtr, items);
+          vtrMap.set(vtr, [...items]);
         }
       });
       
-      result.vtrStocks = Array.from(vtrMap.entries()).map(([vtr, items]) => ({
+      const parsedVtrStocks = Array.from(vtrMap.entries()).map(([vtr, items]) => ({
         vtr,
         items
       }));
-      localStorage.setItem(STORAGE_KEYS.VTR_STOCKS, JSON.stringify(result.vtrStocks));
+
+      if (parsedVtrStocks.length > 0) {
+        result.vtrStocks = parsedVtrStocks;
+        localStorage.setItem(STORAGE_KEYS.VTR_STOCKS, JSON.stringify(result.vtrStocks));
+      }
     }
 
     return result;
@@ -186,12 +201,55 @@ export const syncToGoogleSheets = async (data: { materials: Material[], requests
   if (!url) return false;
 
   try {
+    const mappedVtrStocks = data.vtrStocks.map(vs => ({
+      vtr: String(vs.vtr),
+      items: typeof vs.items === 'string' ? vs.items : JSON.stringify(vs.items || []),
+      details: typeof vs.items === 'string' ? vs.items : JSON.stringify(vs.items || [])
+    }));
+
+    const flatVtrItems: Array<{ vtr: string; materialId: string; code: string; quantity: number }> = [];
+    data.vtrStocks.forEach(vs => {
+      const vtrStr = String(vs.vtr);
+      let itemsArr: RequestedItem[] = [];
+      try {
+        itemsArr = Array.isArray(vs.items) 
+          ? vs.items 
+          : (typeof vs.items === 'string' ? (JSON.parse(vs.items || '[]') || []) : []);
+      } catch (e) {
+        itemsArr = [];
+      }
+      itemsArr.forEach(item => {
+        if (item.quantity > 0) {
+          flatVtrItems.push({
+            vtr: vtrStr,
+            materialId: String(item.materialId),
+            code: String(item.materialId),
+            quantity: Number(item.quantity)
+          });
+        }
+      });
+    });
+
     const payload = {
       action: 'sync',
       materials: data.materials.map(m => ({ code: m.code, name: m.name, stock: m.stock })),
-      requests: data.requests.map(r => ({ id: r.id, vtr: r.vtr, timestamp: r.timestamp, status: r.status, details: JSON.stringify(r.items) })),
+      requests: data.requests.map(r => ({ 
+        id: r.id, 
+        vtr: r.vtr, 
+        timestamp: r.timestamp, 
+        status: r.status, 
+        details: typeof r.items === 'string' ? r.items : JSON.stringify(r.items),
+        items: typeof r.items === 'string' ? r.items : JSON.stringify(r.items)
+      })),
       movements: data.movements.map(m => ({ id: m.id, materialId: m.materialId, type: m.type, quantity: m.quantity, timestamp: m.timestamp, reason: m.reason })),
-      vtrStocks: data.vtrStocks.map(vs => ({ vtr: vs.vtr, items: JSON.stringify(vs.items) }))
+      vtrStocks: mappedVtrStocks,
+      vtr_stocks: mappedVtrStocks,
+      vtrStock: mappedVtrStocks,
+      vtr_stock: mappedVtrStocks,
+      estoqueVtr: mappedVtrStocks,
+      estoque_vtr: mappedVtrStocks,
+      vtrStockFlat: flatVtrItems,
+      vtr_stock_flat: flatVtrItems
     };
 
     const blob = new Blob([JSON.stringify(payload)], { type: 'text/plain;charset=utf-8' });

@@ -44,7 +44,7 @@ const App: React.FC = () => {
         if (remote.materials && remote.materials.length > 0) setMaterials(remote.materials);
         if (remote.requests && Array.isArray(remote.requests)) setRequests(remote.requests);
         if (remote.movements && Array.isArray(remote.movements)) setMovements(remote.movements);
-        if (remote.vtrStocks && Array.isArray(remote.vtrStocks)) setVtrStocks(remote.vtrStocks);
+        if (remote.vtrStocks && Array.isArray(remote.vtrStocks) && remote.vtrStocks.length > 0) setVtrStocks(remote.vtrStocks);
         setLastUpdate(new Date().toLocaleTimeString());
       }
     } catch (e) {
