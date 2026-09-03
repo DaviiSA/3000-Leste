@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { Material, MaterialRequest, StockMovement, VtrStock } from '../types';
-import { Search, Plus, Minus, CheckCircle, XCircle, Download, Database, ClipboardList, Loader2, History, ArrowUpRight, ArrowDownLeft, AlertCircle, LayoutDashboard, Truck, ChevronRight, TrendingUp, Filter, Calendar, RotateCcw, Bell, X, User, Clock, Menu } from 'lucide-react';
+import { Search, Plus, Minus, CheckCircle, XCircle, Download, Database, ClipboardList, Loader2, History, ArrowUpRight, ArrowDownLeft, AlertCircle, LayoutDashboard, Truck, ChevronRight, TrendingUp, Filter, Calendar, RotateCcw, Bell, X, User, Clock, Menu, ChevronDown, ChevronUp, FileSpreadsheet } from 'lucide-react';
 import { exportToExcel, syncToGoogleSheets } from '../services/dataService';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, AreaChart, Area } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
@@ -35,6 +35,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
   const [filterStatus, setFilterStatus] = useState<'Todos' | 'Pendente' | 'Atendido' | 'Cancelado'>('Todos');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+
+  // Estados e Filtros de Auditoria Semanal de Saídas
+  const [expandedAuditMaterialId, setExpandedAuditMaterialId] = useState<string | null>(null);
+  const [auditSearchTerm, setAuditSearchTerm] = useState('');
+  const [auditSelectedWeekKey, setAuditSelectedWeekKey] = useState<string>('all');
 
   const stats = useMemo(() => {
     const thirtyDaysAgo = new Date();
@@ -141,6 +146,144 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
       .slice(0, 8);
   }, [requests, materials]);
 
+  // Cálculo da Auditoria Semanal de Saídas por Material
+  const weeklyAuditData = useMemo(() => {
+    const now = new Date();
+    const weeks: { key: string; label: string; shortLabel: string; start: Date; end: Date }[] = [];
+    
+    // Gerar os intervalos das últimas 6 semanas
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - (i * 7));
+      
+      const day = d.getDay();
+      const diffToMonday = d.getDate() - day + (day === 0 ? -6 : 1);
+      const monday = new Date(d.setDate(diffToMonday));
+      monday.setHours(0, 0, 0, 0);
+
+      const sunday = new Date(monday);
+      sunday.setDate(sunday.getDate() + 6);
+      sunday.setHours(23, 59, 59, 999);
+
+      const startFmt = monday.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+      const endFmt = sunday.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+
+      const label = i === 0 
+        ? `Esta Semana (${startFmt} - ${endFmt})`
+        : `Semana -${i} (${startFmt} - ${endFmt})`;
+
+      const shortLabel = i === 0 ? `Atual (${startFmt})` : `Sem -${i} (${startFmt})`;
+
+      weeks.push({
+        key: monday.toISOString().split('T')[0],
+        label,
+        shortLabel,
+        start: monday,
+        end: sunday
+      });
+    }
+
+    const exitMovements = movements.filter(m => m.type === 'Saída');
+
+    const materialsMap: Record<string, {
+      material: Material;
+      totalExits: number;
+      weeklyQuantities: Record<string, number>;
+      logs: Array<{
+        id: string;
+        timestamp: string;
+        quantity: number;
+        reason: string;
+        vtr: string;
+      }>;
+    }> = {};
+
+    materials.forEach(m => {
+      materialsMap[m.id] = {
+        material: m,
+        totalExits: 0,
+        weeklyQuantities: {},
+        logs: []
+      };
+      weeks.forEach(w => {
+        materialsMap[m.id].weeklyQuantities[w.key] = 0;
+      });
+    });
+
+    exitMovements.forEach(m => {
+      const matId = m.materialId;
+      if (!materialsMap[matId]) {
+        const mat = materials.find(x => x.id === matId) || { id: matId, code: matId, name: 'Material ' + matId, stock: 0 };
+        materialsMap[matId] = {
+          material: mat,
+          totalExits: 0,
+          weeklyQuantities: {},
+          logs: []
+        };
+        weeks.forEach(w => {
+          materialsMap[matId].weeklyQuantities[w.key] = 0;
+        });
+      }
+
+      const mDate = new Date(m.timestamp);
+      
+      weeks.forEach(w => {
+        if (mDate >= w.start && mDate <= w.end) {
+          materialsMap[matId].weeklyQuantities[w.key] += m.quantity;
+        }
+      });
+
+      materialsMap[matId].totalExits += m.quantity;
+
+      let vtr = '---';
+      if (m.reason) {
+        const match = m.reason.match(/vtr[-_\s]*\d+/i) || m.reason.match(/vtr[^\s]*/i);
+        if (match) vtr = match[0].toUpperCase();
+      }
+
+      materialsMap[matId].logs.push({
+        id: m.id,
+        timestamp: m.timestamp,
+        quantity: m.quantity,
+        reason: m.reason || 'Saída registrada',
+        vtr
+      });
+    });
+
+    Object.values(materialsMap).forEach(item => {
+      item.logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    });
+
+    let itemsWithExits = Object.values(materialsMap).filter(item => item.totalExits > 0);
+
+    if (auditSearchTerm.trim()) {
+      const term = auditSearchTerm.toLowerCase();
+      itemsWithExits = itemsWithExits.filter(i => 
+        i.material.name.toLowerCase().includes(term) ||
+        i.material.code.toLowerCase().includes(term) ||
+        i.logs.some(l => l.reason.toLowerCase().includes(term) || l.vtr.toLowerCase().includes(term))
+      );
+    }
+
+    if (auditSelectedWeekKey !== 'all') {
+      itemsWithExits = itemsWithExits.filter(i => (i.weeklyQuantities[auditSelectedWeekKey] || 0) > 0);
+    }
+
+    itemsWithExits.sort((a, b) => {
+      if (auditSelectedWeekKey !== 'all') {
+        return (b.weeklyQuantities[auditSelectedWeekKey] || 0) - (a.weeklyQuantities[auditSelectedWeekKey] || 0);
+      }
+      return b.totalExits - a.totalExits;
+    });
+
+    return {
+      weeks,
+      items: itemsWithExits,
+      totalExitMovementsCount: exitMovements.length,
+      totalExitUnits: exitMovements.reduce((acc, curr) => acc + curr.quantity, 0)
+    };
+  }, [movements, materials, auditSearchTerm, auditSelectedWeekKey]);
+
   const filteredMaterials = useMemo(() => materials.filter(m => 
     m.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
     m.code.includes(searchTerm)
@@ -244,6 +387,28 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
       });
     });
     exportToExcel(flatten, 'estoque_destinatarios_lv_leste');
+  };
+
+  const handleExportWeeklyAudit = () => {
+    showNotification('Iniciando exportação da auditoria semanal...');
+    const flatten: any[] = [];
+
+    weeklyAuditData.items.forEach(item => {
+      const row: any = {
+        'Código': item.material.code,
+        'Material': item.material.name,
+        'Estoque Atual': item.material.stock,
+        'Total Saídas (Geral)': item.totalExits,
+      };
+
+      weeklyAuditData.weeks.forEach(w => {
+        row[w.label] = item.weeklyQuantities[w.key] || 0;
+      });
+
+      flatten.push(row);
+    });
+
+    exportToExcel(flatten, `auditoria_semanal_saidas_${new Date().toISOString().split('T')[0]}`);
   };
 
   const handleSync = async () => {
@@ -593,6 +758,200 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
                         </div>
                       ))}
                     </div>
+                  </div>
+                </div>
+
+                {/* Auditoria Semanal de Saídas de Materiais */}
+                <div className="bg-white p-6 lg:p-8 rounded-[2.5rem] shadow-sm border border-zinc-200/50 space-y-6">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="flex items-center gap-4">
+                      <div className="p-3 bg-amber-50 text-amber-600 rounded-2xl">
+                        <History size={24} />
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-bold text-zinc-900">Auditoria Semanal de Saídas por Item</h3>
+                        <p className="text-xs text-zinc-400 font-bold uppercase tracking-widest">
+                          Histórico detalhado do consumo de materiais por semana
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button
+                        onClick={handleExportWeeklyAudit}
+                        className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-bold hover:bg-emerald-100 transition-all active:scale-95 border border-emerald-200/50"
+                      >
+                        <Download size={16} /> Excel Auditoria
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Audit Filters Bar */}
+                  <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-zinc-50/80 p-4 rounded-2xl border border-zinc-100">
+                    <div className="relative w-full sm:w-80 group">
+                      <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400 group-focus-within:text-blue-600 transition-colors" size={16} />
+                      <input 
+                        type="text" 
+                        placeholder="Buscar material, código ou motivo..." 
+                        className="w-full pl-10 pr-4 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none transition-all"
+                        value={auditSearchTerm}
+                        onChange={(e) => setAuditSearchTerm(e.target.value)}
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-3 w-full sm:w-auto">
+                      <div className="flex items-center gap-2 w-full sm:w-auto">
+                        <Filter size={14} className="text-zinc-400 hidden sm:block" />
+                        <select
+                          className="w-full sm:w-auto px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none cursor-pointer"
+                          value={auditSelectedWeekKey}
+                          onChange={(e) => setAuditSelectedWeekKey(e.target.value)}
+                        >
+                          <option value="all">Todas as Semanas (Visão Matriz)</option>
+                          {weeklyAuditData.weeks.map(w => (
+                            <option key={w.key} value={w.key}>{w.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Audit Table */}
+                  <div className="overflow-x-auto custom-scrollbar border border-zinc-100 rounded-2xl">
+                    <table className="w-full text-left text-xs border-collapse min-w-[750px]">
+                      <thead className="bg-zinc-50 text-zinc-500 font-bold uppercase text-[10px] tracking-wider border-b border-zinc-200/60">
+                        <tr>
+                          <th className="px-5 py-4">Código</th>
+                          <th className="px-5 py-4">Material</th>
+                          <th className="px-4 py-4 text-center">Estoque Atual</th>
+                          <th className="px-4 py-4 text-center">Total Saídas</th>
+                          {weeklyAuditData.weeks.map(w => (
+                            <th key={w.key} className={`px-3 py-4 text-center ${auditSelectedWeekKey === w.key ? 'bg-blue-100/50 text-blue-800' : ''}`}>
+                              {w.shortLabel}
+                            </th>
+                          ))}
+                          <th className="px-4 py-4 text-center">Detalhes</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-100 bg-white">
+                        {weeklyAuditData.items.length > 0 ? (
+                          weeklyAuditData.items.map(item => {
+                            const isExpanded = expandedAuditMaterialId === item.material.id;
+                            return (
+                              <React.Fragment key={item.material.id}>
+                                <tr className={`hover:bg-zinc-50/80 transition-colors ${isExpanded ? 'bg-blue-50/30' : ''}`}>
+                                  <td className="px-5 py-3.5 font-mono text-[11px] font-bold text-zinc-400">
+                                    {item.material.code}
+                                  </td>
+                                  <td className="px-5 py-3.5 font-bold text-zinc-900">
+                                    {item.material.name}
+                                  </td>
+                                  <td className="px-4 py-3.5 text-center">
+                                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                      item.material.stock > 10 ? 'bg-emerald-50 text-emerald-700' : 
+                                      item.material.stock > 0 ? 'bg-orange-50 text-orange-700' : 
+                                      'bg-red-50 text-red-700'
+                                    }`}>
+                                      {item.material.stock} UN
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3.5 text-center">
+                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-red-50 text-red-700 font-black text-[11px]">
+                                      -{item.totalExits}
+                                    </span>
+                                  </td>
+                                  {weeklyAuditData.weeks.map(w => {
+                                    const qty = item.weeklyQuantities[w.key] || 0;
+                                    return (
+                                      <td key={w.key} className="px-3 py-3.5 text-center">
+                                        {qty > 0 ? (
+                                          <span className="inline-flex items-center justify-center min-w-[28px] px-2 py-0.5 bg-blue-50 text-blue-700 font-bold rounded-lg text-[10px] ring-1 ring-blue-100">
+                                            {qty}
+                                          </span>
+                                        ) : (
+                                          <span className="text-zinc-300 font-mono text-[10px]">-</span>
+                                        )}
+                                      </td>
+                                    );
+                                  })}
+                                  <td className="px-4 py-3.5 text-center">
+                                    <button
+                                      onClick={() => setExpandedAuditMaterialId(isExpanded ? null : item.material.id)}
+                                      className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all ${
+                                        isExpanded 
+                                          ? 'bg-blue-600 text-white shadow-sm' 
+                                          : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+                                      }`}
+                                    >
+                                      {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                      <span>{isExpanded ? 'Ocultar' : 'Histórico'}</span>
+                                    </button>
+                                  </td>
+                                </tr>
+
+                                {/* Sub-row details when expanded */}
+                                {isExpanded && (
+                                  <tr className="bg-zinc-50/90 border-b border-zinc-200/80">
+                                    <td colSpan={5 + weeklyAuditData.weeks.length} className="px-6 py-4">
+                                      <div className="bg-white p-4 rounded-2xl border border-zinc-200/80 shadow-sm space-y-3">
+                                        <div className="flex items-center justify-between border-b border-zinc-100 pb-2">
+                                          <h4 className="text-xs font-bold text-zinc-900 flex items-center gap-2">
+                                            <ClipboardList size={14} className="text-blue-600" />
+                                            Lançamentos de Saída: <span className="text-blue-600">{item.material.name}</span>
+                                          </h4>
+                                          <span className="text-[10px] text-zinc-400 font-bold uppercase">
+                                            {item.logs.length} movimentação(ões) registrada(s)
+                                          </span>
+                                        </div>
+
+                                        <div className="max-h-60 overflow-y-auto custom-scrollbar space-y-2">
+                                          {item.logs.map((log) => (
+                                            <div 
+                                              key={log.id} 
+                                              className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-zinc-50 rounded-xl text-xs gap-2 border border-zinc-100 hover:bg-white transition-colors"
+                                            >
+                                              <div className="flex items-center gap-3">
+                                                <div className="p-1.5 bg-red-100 text-red-600 rounded-lg">
+                                                  <ArrowUpRight size={14} />
+                                                </div>
+                                                <div>
+                                                  <p className="font-bold text-zinc-800">{log.reason}</p>
+                                                  <p className="text-[10px] text-zinc-400 font-mono">ID: {log.id}</p>
+                                                </div>
+                                              </div>
+
+                                              <div className="flex items-center gap-4 self-end sm:self-auto">
+                                                {log.vtr !== '---' && (
+                                                  <span className="px-2 py-0.5 bg-purple-50 text-purple-700 font-bold rounded-lg text-[10px]">
+                                                    {log.vtr}
+                                                  </span>
+                                                )}
+                                                <span className="font-mono text-[10px] text-zinc-500 font-bold">
+                                                  {new Date(log.timestamp).toLocaleString('pt-BR')}
+                                                </span>
+                                                <span className="px-2.5 py-1 bg-red-50 text-red-700 font-black rounded-lg text-xs">
+                                                  -{log.quantity} UN
+                                                </span>
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )}
+                              </React.Fragment>
+                            );
+                          })
+                        ) : (
+                          <tr>
+                            <td colSpan={5 + weeklyAuditData.weeks.length} className="py-12 text-center text-zinc-400 text-xs italic">
+                              Nenhum registro de saída encontrado para os filtros selecionados.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               </div>
