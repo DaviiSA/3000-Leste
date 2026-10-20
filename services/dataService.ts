@@ -73,7 +73,12 @@ export const fetchRemoteData = async (): Promise<{
           vtr: String(r.vtr || 'S/V'),
           timestamp: r.timestamp || new Date().toISOString(),
           status: (r.status || 'Pendente') as any,
-          items: items
+          items: items,
+          collected: r.collected === true || r.collected === 'true' || r.pickupStatus === 'retirado',
+          collectedAt: r.collectedAt || r.collected_at || undefined,
+          collectedBy: r.collectedBy || r.collected_by || undefined,
+          pickupStatus: r.pickupStatus || (r.collected === true || r.collected === 'true' ? 'retirado' : 'pendente_retirada'),
+          pickupNote: r.pickupNote || r.pickup_note || undefined
         };
       }).filter((r: MaterialRequest) => r.items.length > 0);
       localStorage.setItem(STORAGE_KEYS.REQUESTS, JSON.stringify(result.requests));
@@ -238,6 +243,10 @@ export const syncToGoogleSheets = async (data: { materials: Material[], requests
         vtr: r.vtr, 
         timestamp: r.timestamp, 
         status: r.status, 
+        collected: !!r.collected,
+        collectedAt: r.collectedAt || '',
+        collectedBy: r.collectedBy || '',
+        pickupStatus: r.pickupStatus || (r.collected ? 'retirado' : 'pendente_retirada'),
         details: typeof r.items === 'string' ? r.items : JSON.stringify(r.items),
         items: typeof r.items === 'string' ? r.items : JSON.stringify(r.items)
       })),

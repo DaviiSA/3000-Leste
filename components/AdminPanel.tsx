@@ -15,10 +15,22 @@ interface AdminPanelProps {
   onUpdateRequestStatus: (requestId: string, status: 'Atendido' | 'Cancelado') => void;
   onUpdateItemInRequest: (requestId: string, materialId: string, action: 'update' | 'cancel', newQuantity?: number) => void;
   onUpdateVtrStock?: (vtr: string, materialId: string, delta: number) => void;
+  onTogglePickup?: (requestId: string, collected: boolean, collectedBy?: string) => void;
   onLogout?: () => void;
 }
 
-const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements, vtrStocks, onUpdateStock, onUpdateRequestStatus, onUpdateItemInRequest, onUpdateVtrStock, onLogout }) => {
+const AdminPanel: React.FC<AdminPanelProps> = ({ 
+  materials, 
+  requests, 
+  movements, 
+  vtrStocks, 
+  onUpdateStock, 
+  onUpdateRequestStatus, 
+  onUpdateItemInRequest, 
+  onUpdateVtrStock, 
+  onTogglePickup,
+  onLogout 
+}) => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'stock' | 'requests' | 'history' | 'vtr_stock'>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [selectedVtr, setSelectedVtr] = useState<string | null>(null);
@@ -33,6 +45,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
 
   // Filtros de Solicitações
   const [filterStatus, setFilterStatus] = useState<'Todos' | 'Pendente' | 'Atendido' | 'Cancelado'>('Todos');
+  const [filterPickup, setFilterPickup] = useState<'Todos' | 'Retirado' | 'PendenteRetirada'>('Todos');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
 
@@ -322,6 +335,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
       
       const matchesStatus = filterStatus === 'Todos' || r.status === filterStatus;
       
+      const matchesPickup = filterPickup === 'Todos' || 
+        (filterPickup === 'Retirado' && r.collected) || 
+        (filterPickup === 'PendenteRetirada' && !r.collected);
+      
       const reqDate = new Date(r.timestamp);
       reqDate.setHours(0,0,0,0);
       
@@ -331,9 +348,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
       const matchesStartDate = !start ? true : new Date(r.timestamp) >= start;
       const matchesEndDate = !end ? true : new Date(r.timestamp) <= end;
       
-      return matchesSearch && matchesStatus && matchesStartDate && matchesEndDate;
+      return matchesSearch && matchesStatus && matchesPickup && matchesStartDate && matchesEndDate;
     }).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-  }, [requests, searchTerm, materials, filterStatus, startDate, endDate]);
+  }, [requests, searchTerm, materials, filterStatus, filterPickup, startDate, endDate]);
 
   const handleExportStock = () => {
     showNotification('Iniciando exportação de estoque...');
@@ -1037,6 +1054,27 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
                       ))}
                     </div>
                   </div>
+
+                  <div className="flex-1 w-full space-y-2">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em] ml-1 flex items-center gap-2">
+                      <CheckCircle size={14} className="text-emerald-600" /> Retirada (Autoatendimento)
+                    </label>
+                    <div className="flex p-1.5 bg-zinc-50 rounded-2xl border border-zinc-100 overflow-x-auto no-scrollbar">
+                      {(['Todos', 'Retirado', 'PendenteRetirada'] as const).map(pStatus => (
+                        <button
+                          key={pStatus}
+                          onClick={() => setFilterPickup(pStatus)}
+                          className={`flex-1 px-3 lg:px-4 py-2.5 rounded-xl text-[10px] font-black transition-all whitespace-nowrap uppercase tracking-widest ${
+                            filterPickup === pStatus 
+                              ? 'bg-white shadow-sm text-emerald-700 ring-1 ring-zinc-200' 
+                              : 'text-zinc-400 hover:text-zinc-600'
+                          }`}
+                        >
+                          {pStatus === 'Todos' ? 'Todos' : pStatus === 'Retirado' ? 'Já Retirado' : 'Aguardando Retirada'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   
                   <div className="w-full xl:w-auto space-y-2">
                     <label className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em] ml-1 flex items-center gap-2">
@@ -1060,7 +1098,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
                   </div>
 
                   <button 
-                    onClick={() => { setFilterStatus('Todos'); setStartDate(''); setEndDate(''); setSearchTerm(''); }}
+                    onClick={() => { setFilterStatus('Todos'); setFilterPickup('Todos'); setStartDate(''); setEndDate(''); setSearchTerm(''); }}
                     className="p-3 bg-zinc-900 text-white hover:bg-zinc-800 rounded-2xl shadow-lg shadow-zinc-200 transition-all active:scale-95 group"
                     title="Resetar Filtros"
                   >
@@ -1104,6 +1142,21 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ materials, requests, movements,
                                   <Clock size={12} />
                                   {new Date(req.timestamp).toLocaleString('pt-BR', { dateStyle: 'medium', timeStyle: 'short' })}
                                 </div>
+                                {req.status === 'Pendente' && (
+                                  <div className="flex flex-wrap items-center gap-2 mt-2">
+                                    {req.collected ? (
+                                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                        <CheckCircle size={12} className="text-emerald-600" />
+                                        Retirado pelo solicitante {req.collectedAt ? `às ${new Date(req.collectedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
+                                        <Clock size={12} className="text-amber-600" />
+                                        Aguardando retirada
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             </div>
                             

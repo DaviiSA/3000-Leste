@@ -10,6 +10,7 @@ export interface RequestedItem {
   materialId: string;
   quantity: number;
   cancelled?: boolean;
+  collected?: boolean;
 }
 
 export interface MaterialRequest {
@@ -18,6 +19,11 @@ export interface MaterialRequest {
   timestamp: string;
   items: RequestedItem[];
   status: 'Pendente' | 'Atendido' | 'Cancelado';
+  collected?: boolean;
+  collectedAt?: string;
+  collectedBy?: string;
+  pickupStatus?: 'retirado' | 'pendente_retirada';
+  pickupNote?: string;
 }
 
 export interface StockMovement {

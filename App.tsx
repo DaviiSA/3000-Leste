@@ -119,54 +119,251 @@ const App: React.FC = () => {
     triggerSync(updatedMats, finalRequests, updatedMovs, finalVtrStocks);
   };
 
-  const handleAddRequest = async (vtr: string, items: RequestedItem[]) => {
+  const handleAddRequest = async (
+    vtr: string, 
+    items: RequestedItem[], 
+    alreadyCollected: boolean = false, 
+    pickupNote: string = ''
+  ) => {
     setIsSyncing(true);
     const remote = await fetchRemoteData();
     const currentMaterials = remote?.materials || [...materials];
     const currentMovements = remote?.movements || [...movements];
     const currentRequests = remote?.requests || [...requests];
+    let currentVtrStocks = remote?.vtrStocks || [...vtrStocks];
 
-    // 1. Gerar movimentações de saída (Reserva imediata de estoque)
+    // 1. Gerar movimentações de saída
     const newMovements: StockMovement[] = items.map(item => ({
       id: `MOV-${Date.now()}-${item.materialId}`,
       materialId: item.materialId,
       type: 'Saída',
       quantity: item.quantity,
       timestamp: new Date().toISOString(),
-      reason: `Reserva ${vtr} (Pendente)`
+      reason: alreadyCollected 
+        ? `Retirada Autoatendimento ${vtr} (Material já pego na prateleira)` 
+        : `Reserva ${vtr} (Pendente)`
     }));
 
-    // 2. Abatimento local do estoque (Reserva)
+    // 2. Abatimento local do estoque (Reserva/Baixa)
     const updatedMaterials = currentMaterials.map(m => {
       const r = items.find(i => i.materialId === m.id);
       return r ? { ...m, stock: Math.max(0, m.stock - r.quantity) } : m;
     });
 
-    // 3. Novo pedido inicia como PENDENTE
+    // 3. Novo pedido
     const newRequest: MaterialRequest = {
       id: `PED-${Date.now().toString(36).toUpperCase()}`,
       vtr,
       timestamp: new Date().toISOString(),
-      items,
-      status: 'Pendente'
+      items: items.map(i => ({ ...i, collected: alreadyCollected })),
+      status: alreadyCollected ? 'Atendido' : 'Pendente',
+      collected: alreadyCollected,
+      collectedAt: alreadyCollected ? new Date().toISOString() : undefined,
+      collectedBy: alreadyCollected ? (vtr.startsWith('VTR') ? vtr : `Solicitante ${vtr}`) : undefined,
+      pickupStatus: alreadyCollected ? 'retirado' : 'pendente_retirada',
+      pickupNote: pickupNote || undefined
     };
+
+    // 4. Se o solicitante já pegou o material, credita diretamente o estoque da VTR
+    if (alreadyCollected) {
+      const vtrIdx = currentVtrStocks.findIndex(vs => vs.vtr === vtr);
+      if (vtrIdx === -1) {
+        currentVtrStocks.push({ vtr, items: items.map(i => ({ ...i, collected: true })) });
+      } else {
+        const updatedItems = [...currentVtrStocks[vtrIdx].items];
+        items.forEach(item => {
+          const itemIdx = updatedItems.findIndex(i => i.materialId === item.materialId);
+          if (itemIdx === -1) {
+            updatedItems.push({ ...item, collected: true });
+          } else {
+            updatedItems[itemIdx] = { 
+              ...updatedItems[itemIdx], 
+              quantity: updatedItems[itemIdx].quantity + item.quantity,
+              collected: true
+            };
+          }
+        });
+        currentVtrStocks[vtrIdx] = { ...currentVtrStocks[vtrIdx], items: updatedItems };
+      }
+    }
     
     const updatedRequests = [...currentRequests, newRequest];
     const updatedMovs = [...currentMovements, ...newMovements];
-    const finalVtrStocks = remote?.vtrStocks || [...vtrStocks];
     
     setMaterials(updatedMaterials);
     setRequests(updatedRequests);
     setMovements(updatedMovs);
-    setVtrStocks(finalVtrStocks);
+    setVtrStocks(currentVtrStocks);
 
     saveMaterials(updatedMaterials);
     saveRequests(updatedRequests);
     saveMovements(updatedMovs);
-    saveVtrStocks(finalVtrStocks);
+    saveVtrStocks(currentVtrStocks);
     
-    await triggerSync(updatedMaterials, updatedRequests, updatedMovs, finalVtrStocks);
-    alert(`Solicitação para ${vtr} enviada com sucesso! Aguarde a confirmação do administrativo.`);
+    await triggerSync(updatedMaterials, updatedRequests, updatedMovs, currentVtrStocks);
+    if (alreadyCollected) {
+      alert(`✅ Retirada confirmada para ${vtr}!\nComo você já retirou o material na prateleira, o estoque da viatura foi atualizado.`);
+    } else {
+      alert(`Solicitação para ${vtr} enviada com sucesso! Aguarde a reposição ou marque "Já peguei o material" quando retirar.`);
+    }
+  };
+
+  const handleTogglePickupStatus = async (requestId: string, collected: boolean, collectedBy?: string) => {
+    setIsSyncing(true);
+    const remote = await fetchRemoteData();
+    let currentMaterials = remote?.materials || [...materials];
+    let currentMovements = remote?.movements || [...movements];
+    let currentVtrStocks = remote?.vtrStocks || [...vtrStocks];
+    let currentRequests = remote?.requests || [...requests];
+
+    const reqIdx = currentRequests.findIndex(r => r.id === requestId);
+    if (reqIdx === -1) {
+      setIsSyncing(false);
+      return;
+    }
+
+    const req = currentRequests[reqIdx];
+    if (req.status === 'Atendido') {
+      setIsSyncing(false);
+      return;
+    }
+    const activeItems = req.items.filter(i => !i.cancelled);
+
+    if (collected) {
+      const updatedReq: MaterialRequest = {
+        ...req,
+        collected: true,
+        collectedAt: new Date().toISOString(),
+        collectedBy: collectedBy || req.vtr,
+        pickupStatus: 'retirado',
+        status: 'Atendido',
+        items: req.items.map(it => ({ ...it, collected: true }))
+      };
+
+      const vtrIdx = currentVtrStocks.findIndex(vs => vs.vtr === req.vtr);
+      if (vtrIdx === -1) {
+        currentVtrStocks.push({ vtr: req.vtr, items: [...activeItems] });
+      } else {
+        const updatedItems = [...currentVtrStocks[vtrIdx].items];
+        activeItems.forEach(item => {
+          const itemIdx = updatedItems.findIndex(i => i.materialId === item.materialId);
+          if (itemIdx === -1) {
+            updatedItems.push({ ...item });
+          } else {
+            updatedItems[itemIdx] = { 
+              ...updatedItems[itemIdx], 
+              quantity: updatedItems[itemIdx].quantity + item.quantity 
+            };
+          }
+        });
+        currentVtrStocks[vtrIdx] = { ...currentVtrStocks[vtrIdx], items: updatedItems };
+      }
+
+      currentMovements.push({
+        id: `MOV-PICKUP-${Date.now()}-${req.id}`,
+        materialId: req.items[0]?.materialId || '',
+        type: 'Saída',
+        quantity: 0,
+        timestamp: new Date().toISOString(),
+        reason: `Retirada Confirmada pelo Solicitante - ${req.vtr}`
+      });
+
+      currentRequests[reqIdx] = updatedReq;
+    } else {
+      const updatedReq: MaterialRequest = {
+        ...req,
+        collected: false,
+        collectedAt: undefined,
+        pickupStatus: 'pendente_retirada',
+        status: 'Pendente',
+        items: req.items.map(it => ({ ...it, collected: false }))
+      };
+
+      currentRequests[reqIdx] = updatedReq;
+    }
+
+    setMaterials(currentMaterials);
+    setRequests(currentRequests);
+    setMovements(currentMovements);
+    setVtrStocks(currentVtrStocks);
+
+    saveMaterials(currentMaterials);
+    saveRequests(currentRequests);
+    saveMovements(currentMovements);
+    saveVtrStocks(currentVtrStocks);
+
+    await triggerSync(currentMaterials, currentRequests, currentMovements, currentVtrStocks);
+  };
+
+  const handleToggleItemPickup = async (requestId: string, materialId: string, collected: boolean) => {
+    setIsSyncing(true);
+    const remote = await fetchRemoteData();
+    let currentMaterials = remote?.materials || [...materials];
+    let currentMovements = remote?.movements || [...movements];
+    let currentVtrStocks = remote?.vtrStocks || [...vtrStocks];
+    let currentRequests = remote?.requests || [...requests];
+
+    const reqIdx = currentRequests.findIndex(r => r.id === requestId);
+    if (reqIdx === -1) {
+      setIsSyncing(false);
+      return;
+    }
+
+    const req = currentRequests[reqIdx];
+    const updatedItems = req.items.map(it => it.materialId === materialId ? { ...it, collected } : it);
+    const allCollected = updatedItems.filter(i => !i.cancelled).every(i => i.collected);
+    const someCollected = updatedItems.some(i => i.collected);
+
+    const targetItem = updatedItems.find(i => i.materialId === materialId);
+    if (targetItem && !targetItem.cancelled) {
+      const vtrIdx = currentVtrStocks.findIndex(vs => vs.vtr === req.vtr);
+      if (collected) {
+        if (vtrIdx === -1) {
+          currentVtrStocks.push({ vtr: req.vtr, items: [{ materialId, quantity: targetItem.quantity }] });
+        } else {
+          const vtrItems = [...currentVtrStocks[vtrIdx].items];
+          const itemIdx = vtrItems.findIndex(i => i.materialId === materialId);
+          if (itemIdx === -1) {
+            vtrItems.push({ materialId, quantity: targetItem.quantity });
+          } else {
+            vtrItems[itemIdx] = { ...vtrItems[itemIdx], quantity: vtrItems[itemIdx].quantity + targetItem.quantity };
+          }
+          currentVtrStocks[vtrIdx] = { ...currentVtrStocks[vtrIdx], items: vtrItems };
+        }
+      } else {
+        if (vtrIdx !== -1) {
+          const vtrItems = [...currentVtrStocks[vtrIdx].items];
+          const itemIdx = vtrItems.findIndex(i => i.materialId === materialId);
+          if (itemIdx !== -1) {
+            vtrItems[itemIdx] = { ...vtrItems[itemIdx], quantity: Math.max(0, vtrItems[itemIdx].quantity - targetItem.quantity) };
+            currentVtrStocks[vtrIdx] = { ...currentVtrStocks[vtrIdx], items: vtrItems };
+          }
+        }
+      }
+    }
+
+    const updatedReq: MaterialRequest = {
+      ...req,
+      items: updatedItems,
+      collected: allCollected,
+      collectedAt: someCollected ? (req.collectedAt || new Date().toISOString()) : undefined,
+      pickupStatus: allCollected ? 'retirado' : (someCollected ? 'retirado' : 'pendente_retirada'),
+      status: allCollected ? 'Atendido' : req.status
+    };
+
+    currentRequests[reqIdx] = updatedReq;
+
+    setMaterials(currentMaterials);
+    setRequests(currentRequests);
+    setMovements(currentMovements);
+    setVtrStocks(currentVtrStocks);
+
+    saveMaterials(currentMaterials);
+    saveRequests(currentRequests);
+    saveMovements(currentMovements);
+    saveVtrStocks(currentVtrStocks);
+
+    await triggerSync(currentMaterials, currentRequests, currentMovements, currentVtrStocks);
   };
 
   const handleUpdateRequestStatus = async (requestId: string, status: 'Atendido' | 'Cancelado') => {
@@ -549,6 +746,7 @@ const App: React.FC = () => {
             onUpdateRequestStatus={handleUpdateRequestStatus}
             onUpdateItemInRequest={handleUpdateItemInRequest}
             onUpdateVtrStock={handleUpdateVtrStock}
+            onTogglePickup={handleTogglePickupStatus}
             onLogout={() => {
               setIsAdminAuthenticated(false);
               setView('Home');
@@ -560,7 +758,9 @@ const App: React.FC = () => {
       {view === 'Request' && (
         <RequestForm 
           materials={materials.map(m => ({ ...m, availableStock: m.stock }))} 
+          requests={requests}
           onSubmit={handleAddRequest} 
+          onTogglePickup={handleTogglePickupStatus}
           mode="vtr"
         />
       )}
@@ -568,7 +768,9 @@ const App: React.FC = () => {
       {view === 'Other' && (
         <RequestForm 
           materials={materials.map(m => ({ ...m, availableStock: m.stock }))} 
+          requests={requests}
           onSubmit={handleAddRequest} 
+          onTogglePickup={handleTogglePickupStatus}
           mode="other"
         />
       )}
