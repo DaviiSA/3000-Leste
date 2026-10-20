@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { Material, MaterialRequest, StockMovement, VtrStock } from '../types';
-import { Search, Plus, Minus, CheckCircle, XCircle, Download, Database, ClipboardList, Loader2, History, ArrowUpRight, ArrowDownLeft, AlertCircle, LayoutDashboard, Truck, ChevronRight, TrendingUp, Filter, Calendar, RotateCcw, Bell, X, User, Clock, Menu, ChevronDown, ChevronUp, FileSpreadsheet } from 'lucide-react';
+import { Search, Plus, Minus, CheckCircle, XCircle, Download, Database, ClipboardList, Loader2, History, ArrowUpRight, ArrowDownLeft, AlertCircle, LayoutDashboard, Truck, ChevronRight, TrendingUp, Filter, Calendar, RotateCcw, Bell, X, User, Clock, Menu, ChevronDown, ChevronUp, FileSpreadsheet, PackageCheck, AlertTriangle } from 'lucide-react';
 import { exportToExcel, syncToGoogleSheets } from '../services/dataService';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, AreaChart, Area } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
@@ -557,8 +557,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
             >
               <Menu size={20} />
             </button>
-            <h2 className="text-base lg:text-lg font-bold text-zinc-900 capitalize font-display truncate">
-              {activeTab.replace('_', ' ')}
+            <h2 className="text-base lg:text-lg font-bold text-zinc-900 font-display truncate">
+              {activeTab === 'dashboard' ? 'Painel Geral' :
+               activeTab === 'stock' ? 'Controle de Estoque' :
+               activeTab === 'requests' ? 'Solicitações de Materiais' :
+               activeTab === 'vtr_stock' ? 'Estoque por Viatura' : 'Histórico de Movimentações'}
             </h2>
             <div className="hidden sm:block h-4 w-px bg-zinc-200" />
             <div className="hidden sm:flex items-center gap-2 text-zinc-400 text-xs font-medium">
@@ -1032,20 +1035,63 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
             {/* Requests Tab */}
             {activeTab === 'requests' && (
               <div className="space-y-6">
-                {/* Filter Bar Refined */}
-                <div className="bg-white p-4 lg:p-6 rounded-[2rem] shadow-sm border border-zinc-200/50 flex flex-col xl:flex-row gap-6 items-end">
+                {/* KPI Summary Quick Bar */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+                  <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-zinc-200/70 shadow-sm flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold flex-shrink-0">
+                      <ClipboardList size={20} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider truncate">Total Pedidos</p>
+                      <p className="text-lg sm:text-xl font-black text-zinc-900">{requests.length}</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-amber-200/70 shadow-sm flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold flex-shrink-0">
+                      <Clock size={20} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider truncate">Pendentes</p>
+                      <p className="text-lg sm:text-xl font-black text-amber-700">{requests.filter(r => r.status === 'Pendente').length}</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-emerald-200/70 shadow-sm flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold flex-shrink-0">
+                      <CheckCircle size={20} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider truncate">Atendidos</p>
+                      <p className="text-lg sm:text-xl font-black text-emerald-700">{requests.filter(r => r.status === 'Atendido').length}</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-sky-200/70 shadow-sm flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold flex-shrink-0">
+                      <Truck size={20} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold text-sky-600 uppercase tracking-wider truncate">Aguard. Retirada</p>
+                      <p className="text-lg sm:text-xl font-black text-sky-700">{requests.filter(r => r.status === 'Pendente' && !r.collected).length}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Filter Bar */}
+                <div className="bg-white p-4 lg:p-6 rounded-2xl sm:rounded-3xl shadow-sm border border-zinc-200/50 flex flex-col xl:flex-row gap-4 sm:gap-6 items-stretch xl:items-end">
                   <div className="flex-1 w-full space-y-2">
                     <label className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em] ml-1 flex items-center gap-2">
                       <Filter size={14} className="text-blue-600" /> Status do Fluxo
                     </label>
-                    <div className="flex p-1.5 bg-zinc-50 rounded-2xl border border-zinc-100 overflow-x-auto no-scrollbar">
+                    <div className="flex p-1 bg-zinc-50 rounded-2xl border border-zinc-100 overflow-x-auto no-scrollbar">
                       {(['Todos', 'Pendente', 'Atendido', 'Cancelado'] as const).map(status => (
                         <button
                           key={status}
                           onClick={() => setFilterStatus(status)}
-                          className={`flex-1 px-3 lg:px-5 py-2.5 rounded-xl text-[10px] font-black transition-all whitespace-nowrap uppercase tracking-widest ${
+                          className={`flex-1 px-3 py-2 rounded-xl text-[10px] font-black transition-all whitespace-nowrap uppercase tracking-wider ${
                             filterStatus === status 
-                              ? 'bg-white shadow-sm text-blue-700 ring-1 ring-zinc-200' 
+                              ? 'bg-white shadow-sm text-blue-700 ring-1 ring-zinc-200 font-extrabold' 
                               : 'text-zinc-400 hover:text-zinc-600'
                           }`}
                         >
@@ -1059,14 +1105,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                     <label className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em] ml-1 flex items-center gap-2">
                       <CheckCircle size={14} className="text-emerald-600" /> Retirada (Autoatendimento)
                     </label>
-                    <div className="flex p-1.5 bg-zinc-50 rounded-2xl border border-zinc-100 overflow-x-auto no-scrollbar">
+                    <div className="flex p-1 bg-zinc-50 rounded-2xl border border-zinc-100 overflow-x-auto no-scrollbar">
                       {(['Todos', 'Retirado', 'PendenteRetirada'] as const).map(pStatus => (
                         <button
                           key={pStatus}
                           onClick={() => setFilterPickup(pStatus)}
-                          className={`flex-1 px-3 lg:px-4 py-2.5 rounded-xl text-[10px] font-black transition-all whitespace-nowrap uppercase tracking-widest ${
+                          className={`flex-1 px-3 py-2 rounded-xl text-[10px] font-black transition-all whitespace-nowrap uppercase tracking-wider ${
                             filterPickup === pStatus 
-                              ? 'bg-white shadow-sm text-emerald-700 ring-1 ring-zinc-200' 
+                              ? 'bg-white shadow-sm text-emerald-700 ring-1 ring-zinc-200 font-extrabold' 
                               : 'text-zinc-400 hover:text-zinc-600'
                           }`}
                         >
@@ -1080,205 +1126,295 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                     <label className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em] ml-1 flex items-center gap-2">
                       <Calendar size={14} className="text-blue-600" /> Período
                     </label>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 sm:gap-3">
                       <input 
                         type="date" 
                         value={startDate} 
                         onChange={(e) => setStartDate(e.target.value)}
-                        className="flex-1 xl:flex-none bg-zinc-50 border border-zinc-200 rounded-2xl px-4 py-2.5 text-xs font-bold text-zinc-900 focus:ring-4 focus:ring-blue-500/10 focus:border-blue-600 outline-none transition-all"
+                        className="flex-1 xl:flex-none bg-zinc-50 border border-zinc-200 rounded-xl px-3 sm:px-4 py-2 text-xs font-bold text-zinc-900 focus:ring-4 focus:ring-blue-500/10 focus:border-blue-600 outline-none transition-all"
                       />
                       <span className="text-zinc-300 font-bold">-</span>
                       <input 
                         type="date" 
                         value={endDate} 
                         onChange={(e) => setEndDate(e.target.value)}
-                        className="flex-1 xl:flex-none bg-zinc-50 border border-zinc-200 rounded-2xl px-4 py-2.5 text-xs font-bold text-zinc-900 focus:ring-4 focus:ring-blue-500/10 focus:border-blue-600 outline-none transition-all"
+                        className="flex-1 xl:flex-none bg-zinc-50 border border-zinc-200 rounded-xl px-3 sm:px-4 py-2 text-xs font-bold text-zinc-900 focus:ring-4 focus:ring-blue-500/10 focus:border-blue-600 outline-none transition-all"
                       />
+                      <button 
+                        onClick={() => { setFilterStatus('Todos'); setFilterPickup('Todos'); setStartDate(''); setEndDate(''); setSearchTerm(''); }}
+                        className="p-2 sm:p-2.5 bg-zinc-900 text-white hover:bg-zinc-800 rounded-xl shadow-md transition-all active:scale-95 flex-shrink-0"
+                        title="Resetar Filtros"
+                      >
+                        <RotateCcw size={16} />
+                      </button>
                     </div>
                   </div>
-
-                  <button 
-                    onClick={() => { setFilterStatus('Todos'); setFilterPickup('Todos'); setStartDate(''); setEndDate(''); setSearchTerm(''); }}
-                    className="p-3 bg-zinc-900 text-white hover:bg-zinc-800 rounded-2xl shadow-lg shadow-zinc-200 transition-all active:scale-95 group"
-                    title="Resetar Filtros"
-                  >
-                    <RotateCcw size={20} className="group-active:rotate-180 transition-transform duration-500" />
-                  </button>
                 </div>
 
                 {filteredRequests.length === 0 ? (
-                  <div className="bg-white p-24 text-center rounded-[3rem] border-2 border-dashed border-zinc-100 flex flex-col items-center justify-center">
-                    <div className="w-20 h-20 bg-zinc-50 rounded-full flex items-center justify-center text-zinc-200 mb-6">
-                      <ClipboardList size={40} />
+                  <div className="bg-white p-12 sm:p-20 text-center rounded-3xl border-2 border-dashed border-zinc-200 flex flex-col items-center justify-center">
+                    <div className="w-16 h-16 bg-zinc-50 rounded-full flex items-center justify-center text-zinc-300 mb-4">
+                      <ClipboardList size={32} />
                     </div>
-                    <p className="text-zinc-400 font-black uppercase text-xs tracking-[0.2em]">Nenhuma solicitação encontrada no período</p>
+                    <p className="text-zinc-500 font-bold text-sm">Nenhuma solicitação encontrada com os filtros selecionados.</p>
+                    <button 
+                      onClick={() => { setFilterStatus('Todos'); setFilterPickup('Todos'); setStartDate(''); setEndDate(''); setSearchTerm(''); }}
+                      className="mt-3 text-xs font-bold text-blue-600 hover:underline"
+                    >
+                      Limpar filtros e exibir todas
+                    </button>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 gap-6">
-                    {filteredRequests.map(req => (
-                      <motion.div 
-                        layout
-                        key={req.id} 
-                        className={`bg-white rounded-[2.5rem] shadow-sm border transition-all overflow-hidden ${
-                          req.status === 'Pendente' ? 'border-blue-200 ring-4 ring-blue-500/5' : 'border-zinc-200/50'
-                        }`}
-                      >
-                        <div className="p-4 lg:p-8">
-                          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-6 mb-8">
-                            <div className="flex items-start gap-4 lg:gap-5">
-                              <div className={`p-3 lg:p-4 rounded-2xl shadow-lg ${
-                                req.status === 'Pendente' ? 'bg-blue-600 shadow-blue-100 text-white' : 
-                                req.status === 'Atendido' ? 'bg-emerald-600 shadow-emerald-100 text-white' : 
-                                'bg-zinc-400 text-white'
-                              }`}>
-                                <ClipboardList size={20} className="lg:w-6 lg:h-6" />
-                              </div>
-                              <div>
-                                <div className="flex flex-wrap items-center gap-2 lg:gap-3 mb-2">
-                                  <span className="text-[10px] lg:text-xs font-black text-blue-700 bg-blue-50 px-2.5 lg:px-3 py-1 rounded-lg uppercase tracking-wider">{req.vtr}</span>
-                                  <span className="text-[9px] lg:text-[10px] text-zinc-400 font-mono font-bold tracking-widest truncate max-w-[100px] sm:max-w-none">ID {req.id.slice(-8).toUpperCase()}</span>
+                  <div className="grid grid-cols-1 gap-5">
+                    {filteredRequests.map(req => {
+                      const activeItems = req.items.filter(i => !i.cancelled);
+                      const totalQty = activeItems.reduce((acc, i) => acc + i.quantity, 0);
+
+                      return (
+                        <motion.div 
+                          layout
+                          key={req.id} 
+                          className={`bg-white rounded-2xl sm:rounded-3xl shadow-sm border transition-all overflow-hidden ${
+                            req.status === 'Pendente' 
+                              ? 'border-blue-300 ring-2 ring-blue-500/10' 
+                              : req.status === 'Atendido'
+                              ? 'border-emerald-200'
+                              : 'border-zinc-200 opacity-75'
+                          }`}
+                        >
+                          {/* Card Header */}
+                          <div className="p-4 sm:p-5 border-b border-zinc-100 bg-white">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 min-w-0">
+                              {/* Left Info: VTR, ID, Date */}
+                              <div className="flex items-start gap-3 min-w-0 flex-1">
+                                <div className={`p-2.5 sm:p-3 rounded-2xl shadow-sm flex-shrink-0 ${
+                                  req.status === 'Pendente' ? 'bg-blue-600 text-white shadow-blue-200' : 
+                                  req.status === 'Atendido' ? 'bg-emerald-600 text-white shadow-emerald-200' : 
+                                  'bg-zinc-400 text-white'
+                                }`}>
+                                  <ClipboardList size={20} />
                                 </div>
-                                <div className="flex items-center gap-2 text-zinc-500 text-[9px] lg:text-[10px] font-bold uppercase tracking-widest">
-                                  <Clock size={12} />
-                                  {new Date(req.timestamp).toLocaleString('pt-BR', { dateStyle: 'medium', timeStyle: 'short' })}
-                                </div>
-                                {req.status === 'Pendente' && (
-                                  <div className="flex flex-wrap items-center gap-2 mt-2">
-                                    {req.collected ? (
-                                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                        <CheckCircle size={12} className="text-emerald-600" />
-                                        Retirado pelo solicitante {req.collectedAt ? `às ${new Date(req.collectedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}
-                                      </span>
-                                    ) : (
-                                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
-                                        <Clock size={12} className="text-amber-600" />
-                                        Aguardando retirada
-                                      </span>
-                                    )}
+
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-xs sm:text-sm font-black text-blue-800 bg-blue-50 px-3 py-1 rounded-xl uppercase tracking-wider border border-blue-200/70">
+                                      {req.vtr}
+                                    </span>
+                                    <span className="text-[10px] text-zinc-400 font-mono font-bold tracking-wider">
+                                      #{req.id.slice(-6).toUpperCase()}
+                                    </span>
+                                    {/* Status Pill */}
+                                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
+                                      req.status === 'Atendido' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 
+                                      req.status === 'Cancelado' ? 'bg-red-50 text-red-700 border-red-200' : 
+                                      'bg-amber-50 text-amber-700 border-amber-200 animate-pulse'
+                                    }`}>
+                                      ● {req.status}
+                                    </span>
                                   </div>
-                                )}
+
+                                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-zinc-500 text-[10px] sm:text-xs">
+                                    <span className="flex items-center gap-1 font-medium">
+                                      <Clock size={12} className="text-zinc-400" />
+                                      {new Date(req.timestamp).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                                    </span>
+                                    <span className="text-zinc-300 hidden sm:inline">•</span>
+                                    <span className="font-bold text-zinc-600">
+                                      {activeItems.length} {activeItems.length === 1 ? 'item' : 'itens'} ({totalQty} UN no total)
+                                    </span>
+                                  </div>
+                                </div>
                               </div>
-                            </div>
-                            
-                            <div className="flex flex-wrap items-center gap-3 lg:gap-4 self-start xl:self-center">
-                              <span className={`px-4 lg:px-5 py-1.5 lg:py-2 rounded-full text-[9px] lg:text-[10px] font-black uppercase tracking-[0.15em] border ${
-                                req.status === 'Atendido' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 
-                                req.status === 'Cancelado' ? 'bg-red-50 text-red-700 border-red-100' : 
-                                'bg-orange-50 text-orange-700 border-orange-100'
-                              }`}>{req.status}</span>
-                              
-                              <div className="hidden sm:block h-8 w-px bg-zinc-100 mx-2" />
-                              
+
+                              {/* Right: Autoatendimento Retirada Badge */}
                               {req.status === 'Pendente' && (
-                                <div className="flex gap-2 lg:gap-3 w-full sm:w-auto">
-                                  <button 
-                                    onClick={() => {
-                                      onUpdateRequestStatus(req.id, 'Atendido');
-                                      showNotification(`Pedido ${req.id.slice(-5)} atendido!`);
-                                    }} 
-                                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 lg:px-6 py-2.5 bg-blue-600 text-white rounded-2xl shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 text-[10px] lg:text-xs font-black uppercase tracking-widest"
-                                  >
-                                    <CheckCircle size={14} className="lg:w-4 lg:h-4" /> <span className="sm:inline">Atender</span>
-                                  </button>
-                                  <button 
-                                    onClick={() => {
-                                      onUpdateRequestStatus(req.id, 'Cancelado');
-                                      showNotification(`Pedido ${req.id.slice(-5)} cancelado.`, 'error');
-                                    }} 
-                                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 lg:px-6 py-2.5 bg-zinc-100 text-zinc-500 hover:bg-red-50 hover:text-red-600 rounded-2xl transition-all active:scale-95 text-[10px] lg:text-xs font-black uppercase tracking-widest"
-                                  >
-                                    <XCircle size={14} className="lg:w-4 lg:h-4" /> <span className="sm:inline">Cancelar</span>
-                                  </button>
+                                <div className="flex-shrink-0 self-start sm:self-center">
+                                  {req.collected ? (
+                                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-wider bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-sm">
+                                      <CheckCircle size={14} className="text-emerald-600 flex-shrink-0" />
+                                      <span>Já Retirado {req.collectedAt ? `às ${new Date(req.collectedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}</span>
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-wider bg-amber-50 text-amber-800 border border-amber-200">
+                                      <Clock size={14} className="text-amber-600 flex-shrink-0" />
+                                      <span>Aguardando Retirada</span>
+                                    </span>
+                                  )}
                                 </div>
-                              )}
-                              
-                              {req.status === 'Atendido' && (
-                                <button 
-                                  onClick={() => {
-                                    if(confirm("Deseja realmente cancelar este atendimento? O saldo será devolvido ao estoque.")) {
-                                      onUpdateRequestStatus(req.id, 'Cancelado');
-                                      showNotification(`Atendimento ${req.id.slice(-5)} estornado.`, 'info');
-                                    }
-                                  }} 
-                                  className="p-3 text-zinc-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
-                                  title="Estornar Atendimento"
-                                >
-                                  <XCircle size={20} />
-                                </button>
                               )}
                             </div>
                           </div>
 
-                          <div className="bg-zinc-50 rounded-[1.5rem] lg:rounded-[2rem] p-4 lg:p-8 border border-zinc-100 space-y-4">
-                            <div className="flex items-center justify-between mb-4 border-b border-zinc-200 pb-4">
-                              <p className="text-[9px] lg:text-[10px] font-black text-zinc-400 uppercase tracking-widest">Materiais</p>
-                              <p className="text-[9px] lg:text-[10px] font-black text-zinc-400 uppercase tracking-widest">Gestão</p>
+                          {/* Materials List Section */}
+                          <div className="p-3.5 sm:p-5 bg-zinc-50/60">
+                            <div className="flex items-center justify-between mb-3 px-1">
+                              <p className="text-[10px] sm:text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-1.5">
+                                Materiais Solicitados ({req.items.length})
+                              </p>
+                              <p className="text-[10px] sm:text-xs font-black text-zinc-400 uppercase tracking-widest">
+                                Quantidade & Ações
+                              </p>
                             </div>
-                            
-                            {req.items.map((item, idx) => {
-                              const material = materials.find(m => m.id === item.materialId);
-                              return (
-                                <div key={idx} className={`flex justify-between items-center py-2 ${item.cancelled ? 'opacity-40 grayscale' : ''}`}>
-                                  <div className="flex items-center gap-3 lg:gap-4 flex-1">
-                                    <div className="w-1.5 lg:w-2 h-1.5 lg:h-2 rounded-full bg-blue-500 shadow-sm shadow-blue-200 flex-shrink-0" />
-                                    <div className="overflow-hidden">
-                                      <p className={`font-bold text-xs lg:text-sm text-zinc-900 truncate ${item.cancelled ? 'line-through text-zinc-400' : ''}`}>
-                                        {material?.name || `Item ${item.materialId}`}
-                                      </p>
-                                      <p className="text-[9px] lg:text-[10px] font-mono text-zinc-400 font-bold uppercase truncate">{material?.code || item.materialId}</p>
-                                    </div>
-                                    {item.cancelled && <span className="hidden xs:inline text-[8px] lg:text-[9px] bg-zinc-200 text-zinc-600 px-2 py-0.5 rounded-full font-black uppercase tracking-tighter">OFF</span>}
-                                  </div>
 
-                                  <div className="flex items-center gap-3 lg:gap-6">
-                                    {!item.cancelled && req.status === 'Pendente' ? (
-                                      <div className="flex items-center bg-white rounded-xl border border-zinc-200 shadow-sm overflow-hidden p-0.5 lg:p-1">
-                                        <button 
-                                          onClick={() => {
-                                            const newQty = Math.max(1, item.quantity - 1);
-                                            onUpdateItemInRequest(req.id, item.materialId, 'update', newQty);
-                                          }}
-                                          className="p-1 lg:p-1.5 hover:bg-zinc-50 text-zinc-400 rounded-lg transition-colors"
-                                        >
-                                          <Minus size={12} className="lg:w-3.5 lg:h-3.5" />
-                                        </button>
-                                        <span className="min-w-[30px] lg:min-w-[40px] text-center font-black text-zinc-900 text-[10px] lg:text-xs tracking-tight">x{item.quantity}</span>
-                                        <button 
-                                          onClick={() => {
-                                            onUpdateItemInRequest(req.id, item.materialId, 'update', item.quantity + 1);
-                                          }}
-                                          className="p-1 lg:p-1.5 hover:bg-zinc-50 text-zinc-400 rounded-lg transition-colors"
-                                        >
-                                          <Plus size={12} className="lg:w-3.5 lg:h-3.5" />
-                                        </button>
+                            <div className="space-y-2.5">
+                              {req.items.map((item, idx) => {
+                                const material = materials.find(m => m.id === item.materialId);
+                                const isStockSufficient = (material?.stock || 0) >= item.quantity;
+
+                                return (
+                                  <div 
+                                    key={idx} 
+                                    className={`p-3 sm:p-3.5 rounded-xl sm:rounded-2xl border transition-all ${
+                                      item.cancelled 
+                                        ? 'bg-zinc-100/70 border-zinc-200 opacity-60' 
+                                        : 'bg-white border-zinc-200/90 shadow-sm'
+                                    }`}
+                                  >
+                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 min-w-0">
+                                      {/* Item Description (Wraps naturally, never cut off!) */}
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mb-1">
+                                          <span className="font-mono text-[10px] font-black px-2 py-0.5 rounded bg-zinc-100 text-zinc-700 border border-zinc-200">
+                                            {material?.code || item.materialId}
+                                          </span>
+                                          {material && (
+                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 ${
+                                              isStockSufficient 
+                                                ? 'bg-emerald-50 text-emerald-700' 
+                                                : 'bg-red-50 text-red-700 font-black'
+                                            }`}>
+                                              {isStockSufficient ? <PackageCheck size={11} /> : <AlertTriangle size={11} />}
+                                              Estoque Central: {material.stock} UN
+                                            </span>
+                                          )}
+                                          {item.cancelled && (
+                                            <span className="text-[9px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-black uppercase">
+                                              Item Cancelado
+                                            </span>
+                                          )}
+                                        </div>
+                                        
+                                        <p className={`font-bold text-xs sm:text-sm text-zinc-900 leading-snug break-words ${
+                                          item.cancelled ? 'line-through text-zinc-400' : ''
+                                        }`}>
+                                          {material?.name || `Item ${item.materialId}`}
+                                        </p>
                                       </div>
-                                    ) : (
-                                      <span className="bg-zinc-200/50 px-2.5 lg:px-4 py-1 lg:py-1.5 rounded-lg lg:rounded-xl font-black text-zinc-700 text-[10px] lg:text-xs shadow-inner">x{item.quantity}</span>
-                                    )}
 
-                                    {req.status === 'Pendente' && (
-                                      <button 
-                                        onClick={() => {
-                                          onUpdateItemInRequest(req.id, item.materialId, 'cancel');
-                                        }}
-                                        className={`p-2.5 rounded-xl transition-all ${
-                                          item.cancelled 
-                                            ? 'text-blue-600 bg-blue-50 hover:bg-blue-100' 
-                                            : 'text-zinc-300 hover:text-red-600 hover:bg-red-50'
-                                        }`}
-                                        title={item.cancelled ? "Reativar Item" : "Remover Item"}
-                                      >
-                                        {item.cancelled ? <RotateCcw size={16} /> : <X size={16} />}
-                                      </button>
-                                    )}
+                                      {/* Quantity & Controls (Always completely visible on mobile & desktop) */}
+                                      <div className="flex items-center justify-between sm:justify-end gap-2.5 flex-shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-zinc-100">
+                                        <span className="sm:hidden text-[10px] font-black text-zinc-400 uppercase tracking-wider">
+                                          Qtd Solicitada:
+                                        </span>
+
+                                        <div className="flex items-center gap-2">
+                                          {!item.cancelled && req.status === 'Pendente' ? (
+                                            <div className="flex items-center bg-zinc-50 rounded-xl border border-zinc-200 shadow-inner overflow-hidden p-0.5">
+                                              <button 
+                                                onClick={() => {
+                                                  const newQty = Math.max(1, item.quantity - 1);
+                                                  onUpdateItemInRequest(req.id, item.materialId, 'update', newQty);
+                                                }}
+                                                className="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center hover:bg-white text-zinc-600 rounded-lg transition-colors active:scale-95"
+                                                title="Diminuir quantidade"
+                                              >
+                                                <Minus size={13} />
+                                              </button>
+                                              <span className="min-w-[40px] text-center font-black text-zinc-900 text-xs sm:text-sm">
+                                                {item.quantity} UN
+                                              </span>
+                                              <button 
+                                                onClick={() => {
+                                                  onUpdateItemInRequest(req.id, item.materialId, 'update', item.quantity + 1);
+                                                }}
+                                                className="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center hover:bg-white text-zinc-600 rounded-lg transition-colors active:scale-95"
+                                                title="Aumentar quantidade"
+                                              >
+                                                <Plus size={13} />
+                                              </button>
+                                            </div>
+                                          ) : (
+                                            <span className="px-3 py-1 rounded-xl font-black text-xs sm:text-sm bg-zinc-100 text-zinc-800 border border-zinc-200">
+                                              {item.quantity} UN
+                                            </span>
+                                          )}
+
+                                          {/* Cancel / Restore button */}
+                                          {req.status === 'Pendente' && (
+                                            <button 
+                                              onClick={() => {
+                                                onUpdateItemInRequest(req.id, item.materialId, 'cancel');
+                                              }}
+                                              className={`p-2 rounded-xl transition-all ${
+                                                item.cancelled 
+                                                  ? 'text-blue-600 bg-blue-50 hover:bg-blue-100' 
+                                                  : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'
+                                              }`}
+                                              title={item.cancelled ? "Reativar Item no pedido" : "Remover Item deste pedido"}
+                                            >
+                                              {item.cancelled ? <RotateCcw size={15} /> : <X size={15} />}
+                                            </button>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
                                   </div>
-                                </div>
-                              );
-                            })}
+                                );
+                              })}
+                            </div>
                           </div>
-                        </div>
-                      </motion.div>
-                    ))}
+
+                          {/* Action Footer */}
+                          {req.status === 'Pendente' && (
+                            <div className="p-3.5 sm:p-4 bg-white border-t border-zinc-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2.5">
+                              <button 
+                                onClick={() => {
+                                  if (confirm(`Deseja cancelar o pedido completo da ${req.vtr}?`)) {
+                                    onUpdateRequestStatus(req.id, 'Cancelado');
+                                    showNotification(`Pedido cancelado.`, 'error');
+                                  }
+                                }} 
+                                className="px-4 py-2.5 bg-zinc-100 hover:bg-red-50 text-zinc-600 hover:text-red-600 rounded-xl transition-all text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 active:scale-95"
+                              >
+                                <XCircle size={15} />
+                                <span>Cancelar Pedido</span>
+                              </button>
+
+                              <button 
+                                onClick={() => {
+                                  onUpdateRequestStatus(req.id, 'Atendido');
+                                  showNotification(`Pedido da ${req.vtr} atendido com sucesso!`);
+                                }} 
+                                className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-lg shadow-blue-200 transition-all active:scale-95 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2"
+                              >
+                                <CheckCircle size={15} />
+                                <span>Atender e Liberar Pedido</span>
+                              </button>
+                            </div>
+                          )}
+
+                          {req.status === 'Atendido' && (
+                            <div className="p-3 sm:p-4 bg-emerald-50/60 border-t border-emerald-100 flex items-center justify-between">
+                              <span className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                                <CheckCircle size={15} className="text-emerald-600" />
+                                Pedido atendido e materiais liberados do estoque
+                              </span>
+                              <button 
+                                onClick={() => {
+                                  if (confirm("Deseja realmente cancelar este atendimento? O saldo será devolvido ao estoque.")) {
+                                    onUpdateRequestStatus(req.id, 'Cancelado');
+                                    showNotification(`Atendimento estornado.`, 'info');
+                                  }
+                                }} 
+                                className="text-[11px] font-bold text-zinc-400 hover:text-red-600 hover:underline transition-colors"
+                              >
+                                Estornar
+                              </button>
+                            </div>
+                          )}
+                        </motion.div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
